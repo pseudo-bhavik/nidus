@@ -37,9 +37,12 @@ export default function LoginPage() {
     document.body.classList.remove('font-sans-custom', 'font-serif-custom', 'font-mono-custom');
     document.body.classList.add(`font-${storedFont}-custom`);
 
-    // 1. Instantly redirect if the user already has a session loaded in local storage
+    // 1. Instantly redirect if the user already has a session loaded in local storage,
+    // but only if we are NOT in the middle of a password recovery flow.
     supabase.auth.getSession().then(({ data: { session } }) => {
-      if (session && viewState !== 'update') {
+      const currentHash = typeof window !== 'undefined' ? window.location.hash || '' : '';
+      const isRecovery = currentHash.includes('type=recovery');
+      if (session && !isRecovery) {
         window.location.href = '/';
       }
     });
