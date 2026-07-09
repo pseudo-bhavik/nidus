@@ -12,7 +12,7 @@ import AuthModal from '../components/AuthModal';
 import SettingsModal from '../components/SettingsModal';
 import EditBookmarkModal from '../components/EditBookmarkModal';
 import ContextMenu from '../components/ContextMenu';
-import { AlertTriangle, Info, Terminal } from 'lucide-react';
+import { AlertTriangle, Info, Terminal, FolderPlus } from 'lucide-react';
 
 const SEED_BOOKMARKS: Bookmark[] = [
   {
@@ -95,6 +95,8 @@ export default function Dashboard() {
   // v1.3 Custom Categories tracking state (without pseudo-links)
   const [customCategories, setCustomCategories] = useState<string[]>([]);
   const [collectionToDelete, setCollectionToDelete] = useState<string | null>(null);
+  const [isCreateCollectionOpen, setIsCreateCollectionOpen] = useState(false);
+  const [newCollectionName, setNewCollectionName] = useState('');
 
   // v1.4 Theme Accent & Priority Filter states
   const [activeTheme, setActiveTheme] = useState('orange');
@@ -360,15 +362,34 @@ export default function Dashboard() {
   };
 
   const handlePromptAddCategory = () => {
-    const cat = prompt('Enter new Collection name:');
-    if (cat && cat.trim()) {
-      const trimmed = cat.trim();
-      if (!customCategories.includes(trimmed)) {
-        const newList = [...customCategories, trimmed];
-        setCustomCategories(newList);
-        localStorage.setItem('antigravity_custom_categories', JSON.stringify(newList));
+    setNewCollectionName('');
+    setIsCreateCollectionOpen(true);
+  };
+
+  const submitCreateCollection = (e: React.FormEvent) => {
+    e.preventDefault();
+    const trimmed = newCollectionName.trim();
+    if (!trimmed) return;
+
+    if (!customCategories.includes(trimmed)) {
+      const newList = [...customCategories, trimmed];
+      setCustomCategories(newList);
+      localStorage.setItem('antigravity_custom_categories', JSON.stringify(newList));
+      
+      // Auto-associate the active bookmark if one is currently selected
+      if (activeBookmark) {
+        const currentCats = activeBookmark.category 
+          ? activeBookmark.category.split(',').map(s => s.trim()).filter(Boolean)
+          : [];
+        if (!currentCats.includes(trimmed)) {
+          const updatedCats = [...currentCats, trimmed].join(', ');
+          handleUpdateBookmark(activeBookmark.id, { category: updatedCats });
+        }
       }
     }
+
+    setIsCreateCollectionOpen(false);
+    setNewCollectionName('');
   };
 
   const handleDeleteCategory = (catToDelete: string) => {
@@ -952,15 +973,8 @@ export default function Dashboard() {
         onOpenImportExport={() => setIsImportExportOpen(true)}
         onSelectBookmark={(b) => setActiveBookmark(b)}
         onAddCategory={() => {
-          const cat = prompt('Enter new Collection name:');
-          if (cat && cat.trim()) {
-            // Seeding category to categories list by creating a mock bookmark or assigning to active item
-            if (activeBookmark) {
-              handleUpdateBookmark(activeBookmark.id, { category: cat.trim() });
-            } else {
-              alert('Select a bookmark first to categorize it into a new Collection.');
-            }
-          }
+          setNewCollectionName('');
+          setIsCreateCollectionOpen(true);
         }}
       />
 
@@ -1077,6 +1091,65 @@ export default function Dashboard() {
               </button>
             </div>
           </div>
+        </div>
+      )}
+
+      {/* Custom Collection Create Modal */}
+      {isCreateCollectionOpen && (
+        <div 
+          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/35 backdrop-blur-xs animate-fade-in"
+          style={{ position: 'fixed', inset: 0, zIndex: 100, display: 'flex', alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(0,0,0,0.3)', backdropFilter: 'blur(2px)' }}
+        >
+          <form 
+            onSubmit={submitCreateCollection}
+            className="bg-white border border-neutral-250 flex flex-col"
+            style={{ width: '100%', maxWidth: '350px', backgroundColor: '#ffffff', border: '1px solid rgba(17, 17, 17, 0.12)', borderRadius: '6px', boxShadow: '0 4px 16px rgba(0,0,0,0.08)', overflow: 'hidden', display: 'flex', flexDirection: 'column' }}
+          >
+            {/* Modal Header */}
+            <div 
+              className="border-b border-neutral-100 flex items-center"
+              style={{ padding: '16px 20px', borderBottom: '1px solid rgba(17, 17, 17, 0.06)', display: 'flex', alignItems: 'center', gap: '8px', backgroundColor: '#fbfbfa' }}
+            >
+              <FolderPlus style={{ width: '16px', height: '16px', color: 'var(--accent-color)' }} />
+              <h3 style={{ margin: 0, fontWeight: '750', fontSize: '12px', color: '#111111', letterSpacing: '-0.02em' }}>Create Collection</h3>
+            </div>
+
+            {/* Modal Body */}
+            <div style={{ padding: '20px', display: 'flex', flexDirection: 'column', gap: '8px' }}>
+              <label style={{ fontWeight: '700', fontSize: '9px', color: '#6a6a6a', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Collection Name</label>
+              <input
+                type="text"
+                placeholder="e.g. Reading List, Tech, Design"
+                value={newCollectionName}
+                onChange={(e) => setNewCollectionName(e.target.value)}
+                style={{ width: '100%', padding: '8px 12px', border: '1px solid rgba(17, 17, 17, 0.12)', borderRadius: '4px', outline: 'none', fontWeight: '600', fontSize: '12px', backgroundColor: '#ffffff' }}
+                required
+                autoFocus
+              />
+            </div>
+
+            {/* Modal Footer Actions */}
+            <div 
+              style={{ padding: '12px 20px', backgroundColor: '#fbfbfa', borderTop: '1px solid rgba(17, 17, 17, 0.06)', display: 'flex', justifyContent: 'flex-end', gap: '8px' }}
+            >
+              <button
+                type="button"
+                onClick={() => {
+                  setIsCreateCollectionOpen(false);
+                  setNewCollectionName('');
+                }}
+                style={{ padding: '7px 12px', backgroundColor: 'transparent', border: '1px solid rgba(17, 17, 17, 0.12)', color: '#111111', fontWeight: '700', borderRadius: '4px', cursor: 'pointer', fontSize: '11px' }}
+              >
+                Cancel
+              </button>
+              <button
+                type="submit"
+                style={{ padding: '7px 12px', backgroundColor: 'var(--accent-color)', border: 'none', color: '#ffffff', fontWeight: '800', borderRadius: '4px', cursor: 'pointer', fontSize: '11px' }}
+              >
+                Create Collection
+              </button>
+            </div>
+          </form>
         </div>
       )}
     </div>
