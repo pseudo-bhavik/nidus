@@ -40,16 +40,19 @@ export default function LoginPage() {
     // 1. Instantly redirect if the user already has a session loaded in local storage,
     // but only if we are NOT in the middle of a password recovery flow.
     supabase.auth.getSession().then(({ data: { session } }) => {
+      const currentSearch = typeof window !== 'undefined' ? window.location.search || '' : '';
       const currentHash = typeof window !== 'undefined' ? window.location.hash || '' : '';
-      const isRecovery = currentHash.includes('type=recovery');
+      const isRecovery = currentSearch.includes('type=recovery') || currentHash.includes('type=recovery');
+      
       if (session && !isRecovery) {
         window.location.href = '/';
       }
     });
 
     // 2. Detect if we came from a recovery/reset password email link
-    const hash = typeof window !== 'undefined' ? window.location.hash || '' : '';
-    if (hash.includes('type=recovery')) {
+    const currentSearch = typeof window !== 'undefined' ? window.location.search || '' : '';
+    const currentHash = typeof window !== 'undefined' ? window.location.hash || '' : '';
+    if (currentSearch.includes('type=recovery') || currentHash.includes('type=recovery')) {
       setViewState('update');
     }
 
@@ -59,8 +62,9 @@ export default function LoginPage() {
         setViewState('update');
       } else if (event === 'SIGNED_IN' && session) {
         // Prevent redirecting if we are intentionally resetting password
-        const currentHash = typeof window !== 'undefined' ? window.location.hash || '' : '';
-        if (!currentHash.includes('type=recovery')) {
+        const checkSearch = typeof window !== 'undefined' ? window.location.search || '' : '';
+        const checkHash = typeof window !== 'undefined' ? window.location.hash || '' : '';
+        if (!checkSearch.includes('type=recovery') && !checkHash.includes('type=recovery')) {
           window.location.href = '/';
         }
       }
@@ -149,7 +153,7 @@ export default function LoginPage() {
 
     try {
       const { error } = await supabase.auth.resetPasswordForEmail(email.trim(), {
-        redirectTo: `${window.location.origin}/login`,
+        redirectTo: `${window.location.origin}/login?type=recovery`,
       });
       if (error) throw error;
       
