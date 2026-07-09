@@ -17,7 +17,7 @@ create table public.bookmarks (
   domain text not null,
   title text not null,
   description text default '',
-  image_url text default '',
+  thumbnail_url text default '',
   category text default 'Unsorted',
   priority text default 'Medium' check (priority in ('Low', 'Medium', 'High')),
   read_time_minutes integer default 2,
