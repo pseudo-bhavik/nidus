@@ -87,14 +87,14 @@ export default function LoginPage() {
         });
         if (error) throw error;
         
-        // Since Confirm Email is turned OFF, signUp automatically logs the user in and returns a session
-        if (data?.session || data?.user) {
+        // Since Confirm Email is turned ON, signUp will return data.user but data.session will be null
+        if (data?.session) {
           setSuccessMsg('Account created successfully! Logging you in...');
           setTimeout(() => {
             window.location.href = '/';
           }, 1500);
         } else {
-          setSuccessMsg('Account created! You can now sign in using your credentials.');
+          setSuccessMsg('Account created! Please check your email inbox and click the verification link to confirm your email before signing in.');
           setViewState('signin');
           setPassword('');
         }
@@ -412,6 +412,13 @@ export default function LoginPage() {
                       <span>{viewState === 'signin' ? 'Sign In & Sync' : 'Create Account'}</span>
                     )}
                   </button>
+
+                  {/* Verification Notice */}
+                  {viewState === 'signup' && (
+                    <p style={{ fontSize: '10px', color: '#6a6a6a', fontWeight: '600', lineHeight: '1.5', textAlign: 'center', margin: '4px 0 0 0' }}>
+                      A verification email will be sent to confirm your address before you can sign in.
+                    </p>
+                  )}
 
                   {/* Divider */}
                   <div style={{ display: 'flex', alignItems: 'center', gap: '8px', paddingTop: '2px', paddingBottom: '2px', color: 'rgba(17, 17, 17, 0.08)', userSelect: 'none' }}>
