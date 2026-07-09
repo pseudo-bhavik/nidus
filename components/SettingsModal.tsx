@@ -243,7 +243,7 @@ export default function SettingsModal({
                     </p>
                     <pre className="mt-1.5 p-1.5 bg-white/60 border border-amber-200/60 rounded font-mono text-[9px] text-neutral-700 select-all overflow-x-auto">
                       NEXT_PUBLIC_SUPABASE_URL=your-project-url{"\n"}
-                      NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY=your-publishable-key
+                      NEXT_PUBLIC_SUPABASE_ANON_KEY=your-anon-jwt-key
                     </pre>
                   </div>
                 )}
