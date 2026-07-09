@@ -37,18 +37,29 @@ export default function LoginPage() {
     document.body.classList.remove('font-sans-custom', 'font-serif-custom', 'font-mono-custom');
     document.body.classList.add(`font-${storedFont}-custom`);
 
-    // Detect if we came from a recovery/reset password email link
+    // 1. Instantly redirect if the user already has a session loaded in local storage
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      if (session && viewState !== 'update') {
+        window.location.href = '/';
+      }
+    });
+
+    // 2. Detect if we came from a recovery/reset password email link
     const hash = typeof window !== 'undefined' ? window.location.hash || '' : '';
     if (hash.includes('type=recovery')) {
       setViewState('update');
     }
 
+    // 3. Listen to auth state changes (e.g. email link confirmation, logins, recovery links)
     const { data: authListener } = supabase.auth.onAuthStateChange((event, session) => {
       if (event === 'PASSWORD_RECOVERY') {
         setViewState('update');
       } else if (event === 'SIGNED_IN' && session) {
-        // Automatically redirect to dashboard when a session is verified/established
-        window.location.href = '/';
+        // Prevent redirecting if we are intentionally resetting password
+        const currentHash = typeof window !== 'undefined' ? window.location.hash || '' : '';
+        if (!currentHash.includes('type=recovery')) {
+          window.location.href = '/';
+        }
       }
     });
 
