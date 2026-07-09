@@ -13,6 +13,7 @@ interface LeftSidebarProps {
   userEmail: string | null;
   onCloseSidebar: () => void;
   onAddCategory: () => void;
+  onDeleteCategory: (category: string) => void;
   categories: string[];
 }
 
@@ -27,6 +28,7 @@ export default function LeftSidebar({
   userEmail,
   onCloseSidebar,
   onAddCategory,
+  onDeleteCategory,
   categories,
 }: LeftSidebarProps) {
   // Aggregate categories and counts (supporting bookmarks in multiple collections)
@@ -148,19 +150,32 @@ export default function LeftSidebar({
                 <button
                   key={cat}
                   onClick={() => onViewChange(cat)}
-                  className={`w-full px-3 py-1.5 rounded-md flex items-center justify-between font-bold cursor-pointer transition-all-custom ${
+                  className={`w-full px-3 py-1.5 rounded-md flex items-center justify-between font-bold cursor-pointer transition-all-custom group ${
                     isSelected
                       ? 'bg-neutral-900/5 text-neutral-800'
                       : 'text-neutral-500 hover:bg-neutral-900/3 hover:text-neutral-700'
                   }`}
                 >
-                  <div className="flex items-center gap-2 truncate">
+                  <div className="flex items-center gap-2 truncate mr-2">
                     <Folder className="w-3.5 h-3.5 shrink-0 text-neutral-400" />
                     <span className="truncate">{cat}</span>
                   </div>
-                  <span className="text-[10px] text-neutral-400 font-bold shrink-0">
-                    {categoriesMap[cat] || 0}
-                  </span>
+                  
+                  <div className="flex items-center gap-1.5 shrink-0">
+                    <span className="text-[10px] text-neutral-400 font-bold group-hover:hidden">
+                      {categoriesMap[cat] || 0}
+                    </span>
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        onDeleteCategory(cat);
+                      }}
+                      className="hidden group-hover:block p-0.5 hover:bg-neutral-200/80 hover:text-red-600 rounded text-neutral-400 transition-all-custom cursor-pointer"
+                      title={`Delete Collection "${cat}"`}
+                    >
+                      <Trash2 className="w-3 h-3" />
+                    </button>
+                  </div>
                 </button>
               );
             })}

@@ -370,6 +370,62 @@ export default function Dashboard() {
     }
   };
 
+  const handleDeleteCategory = async (catToDelete: string) => {
+    const confirmed = confirm(
+      `Are you sure you want to delete the Collection "${catToDelete}"?\n\nBookmarks inside this collection will NOT be deleted. They will be reset back to "Unsorted".`
+    );
+    if (!confirmed) return;
+
+    // 1. Remove from local custom list
+    const updatedCustom = customCategories.filter((c) => c !== catToDelete);
+    setCustomCategories(updatedCustom);
+    localStorage.setItem('antigravity_custom_categories', JSON.stringify(updatedCustom));
+
+    // 2. If viewing this collection, go back to 'all'
+    if (currentView === catToDelete) {
+      setCurrentView('all');
+    }
+
+    // 3. Update all bookmarks locally that belong to this category
+    const updatedBookmarks = bookmarks.map((b) => {
+      if (!b.category) return b;
+      
+      const cats = b.category.split(',').map((s) => s.trim()).filter(Boolean);
+      if (cats.includes(catToDelete)) {
+        const filtered = cats.filter((c) => c !== catToDelete);
+        const newCategoryString = filtered.length > 0 ? filtered.join(', ') : 'Unsorted';
+        return { ...b, category: newCategoryString };
+      }
+      return b;
+    });
+    setBookmarks(updatedBookmarks);
+
+    // 4. Update the database synchronously if online
+    if (isDbConnected) {
+      try {
+        const toUpdate = bookmarks.filter((b) => {
+          if (!b.category) return false;
+          const cats = b.category.split(',').map((s) => s.trim()).filter(Boolean);
+          return cats.includes(catToDelete);
+        });
+
+        // Batch update to Supabase
+        for (const b of toUpdate) {
+          const cats = b.category.split(',').map((s) => s.trim()).filter(Boolean);
+          const filtered = cats.filter((c) => c !== catToDelete);
+          const newCategoryString = filtered.length > 0 ? filtered.join(', ') : 'Unsorted';
+          
+          await supabase
+            .from('bookmarks')
+            .update({ category: newCategoryString })
+            .eq('id', b.id);
+        }
+      } catch (err) {
+        console.error('Failed to sync deleted collection updates with Supabase:', err);
+      }
+    }
+  };
+
   // 2. Update Bookmark
   const handleUpdateBookmark = async (id: string, updates: Partial<Bookmark>) => {
     // Optimistic UI updates
@@ -806,6 +862,7 @@ export default function Dashboard() {
           userEmail={userEmail}
           onCloseSidebar={() => setIsSidebarOpen(false)}
           onAddCategory={handlePromptAddCategory}
+          onDeleteCategory={handleDeleteCategory}
           categories={categoriesList}
         />
       </div>
