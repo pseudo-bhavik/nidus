@@ -39,7 +39,7 @@ export default function LoginPage() {
 
     // Detect if we came from a recovery/reset password email link
     const hash = typeof window !== 'undefined' ? window.location.hash || '' : '';
-    if (hash.includes('type=recovery') || hash.includes('access_token=')) {
+    if (hash.includes('type=recovery')) {
       setViewState('update');
     }
 
