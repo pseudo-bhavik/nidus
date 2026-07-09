@@ -94,6 +94,7 @@ export default function Dashboard() {
 
   // v1.3 Custom Categories tracking state (without pseudo-links)
   const [customCategories, setCustomCategories] = useState<string[]>([]);
+  const [collectionToDelete, setCollectionToDelete] = useState<string | null>(null);
 
   // v1.4 Theme Accent & Priority Filter states
   const [activeTheme, setActiveTheme] = useState('orange');
@@ -370,12 +371,12 @@ export default function Dashboard() {
     }
   };
 
-  const handleDeleteCategory = async (catToDelete: string) => {
-    const confirmed = confirm(
-      `Are you sure you want to delete the Collection "${catToDelete}"?\n\nBookmarks inside this collection will NOT be deleted. They will be reset back to "Unsorted".`
-    );
-    if (!confirmed) return;
+  const handleDeleteCategory = (catToDelete: string) => {
+    // Show in-site custom confirmation modal instead of native browser popup
+    setCollectionToDelete(catToDelete);
+  };
 
+  const confirmDeleteCollection = async (catToDelete: string) => {
     // 1. Remove from local custom list
     const updatedCustom = customCategories.filter((c) => c !== catToDelete);
     setCustomCategories(updatedCustom);
@@ -399,6 +400,9 @@ export default function Dashboard() {
       return b;
     });
     setBookmarks(updatedBookmarks);
+
+    // Close the custom modal
+    setCollectionToDelete(null);
 
     // 4. Update the database synchronously if online
     if (isDbConnected) {
@@ -1022,6 +1026,58 @@ export default function Dashboard() {
           }
           onDelete={() => handleDeleteBookmark(contextMenu.bookmark!.id)}
         />
+      )}
+
+      {/* Custom Collection Delete Confirmation Modal */}
+      {collectionToDelete && (
+        <div 
+          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/35 backdrop-blur-xs animate-fade-in"
+          style={{ position: 'fixed', inset: 0, zIndex: 100, display: 'flex', alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(0,0,0,0.3)', backdropFilter: 'blur(2px)' }}
+        >
+          <div 
+            className="bg-white border border-neutral-250 flex flex-col"
+            style={{ width: '100%', maxWidth: '350px', backgroundColor: '#ffffff', border: '1px solid rgba(17, 17, 17, 0.12)', borderRadius: '6px', boxShadow: '0 4px 16px rgba(0,0,0,0.08)', overflow: 'hidden', display: 'flex', flexDirection: 'column' }}
+          >
+            {/* Modal Header */}
+            <div 
+              className="border-b border-neutral-100 flex items-center"
+              style={{ padding: '16px 20px', borderBottom: '1px solid rgba(17, 17, 17, 0.06)', display: 'flex', alignItems: 'center', gap: '8px', backgroundColor: '#fbfbfa' }}
+            >
+              <AlertTriangle style={{ width: '16px', height: '16px', color: '#ef4444' }} />
+              <h3 style={{ margin: 0, fontWeight: '750', fontSize: '12px', color: '#111111', letterSpacing: '-0.02em' }}>Delete Collection</h3>
+            </div>
+
+            {/* Modal Body */}
+            <div style={{ padding: '20px', display: 'flex', flexDirection: 'column', gap: '10px' }}>
+              <p style={{ fontSize: '11px', color: '#6a6a6a', fontWeight: '600', lineHeight: '1.5', margin: 0 }}>
+                Are you sure you want to delete the Collection <strong style={{ color: '#111111' }}>&ldquo;{collectionToDelete}&rdquo;</strong>?
+              </p>
+              <p style={{ fontSize: '10.5px', color: '#888888', fontWeight: '500', lineHeight: '1.4', margin: 0 }}>
+                Bookmarks inside this collection will not be deleted; they will simply be reset to <span style={{ fontWeight: '700' }}>Unsorted</span>.
+              </p>
+            </div>
+
+            {/* Modal Footer Actions */}
+            <div 
+              style={{ padding: '12px 20px', backgroundColor: '#fbfbfa', borderTop: '1px solid rgba(17, 17, 17, 0.06)', display: 'flex', justifyContent: 'flex-end', gap: '8px' }}
+            >
+              <button
+                type="button"
+                onClick={() => setCollectionToDelete(null)}
+                style={{ padding: '7px 12px', backgroundColor: 'transparent', border: '1px solid rgba(17, 17, 17, 0.12)', color: '#111111', fontWeight: '700', borderRadius: '4px', cursor: 'pointer', fontSize: '11px' }}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={() => confirmDeleteCollection(collectionToDelete)}
+                style={{ padding: '7px 12px', backgroundColor: '#ef4444', border: 'none', color: '#ffffff', fontWeight: '800', borderRadius: '4px', cursor: 'pointer', fontSize: '11px' }}
+              >
+                Delete Collection
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );
