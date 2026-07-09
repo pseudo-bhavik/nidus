@@ -43,9 +43,12 @@ export default function LoginPage() {
       setViewState('update');
     }
 
-    const { data: authListener } = supabase.auth.onAuthStateChange((event) => {
+    const { data: authListener } = supabase.auth.onAuthStateChange((event, session) => {
       if (event === 'PASSWORD_RECOVERY') {
         setViewState('update');
+      } else if (event === 'SIGNED_IN' && session) {
+        // Automatically redirect to dashboard when a session is verified/established
+        window.location.href = '/';
       }
     });
 
