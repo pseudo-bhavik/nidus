@@ -150,9 +150,9 @@ export default function SettingsModal({
                 <hr className="border-neutral-100" />
 
                 <div>
-                  <h4 className="font-bold text-neutral-800 mb-1">1. Adding & Auto-Scraping Links</h4>
+                  <h4 className="font-bold text-neutral-800 mb-1">1. Smart Auto-Scraping & Bypasses</h4>
                   <p className="mb-2">
-                    Paste any URL into the input field in the top bar and click <strong>Submit</strong>. Nidus will fetch metadata (title, description, and preview image) in the background. If a website is protected or offline, it falls back to the URL hostname.
+                    Paste any URL into the input field in the top bar and click <strong>Submit</strong>. Nidus features a multi-layered scraper with custom oEmbed API bypasses for <strong>YouTube, GitHub, Spotify, Reddit, Medium, TikTok, and Vimeo</strong>, combined with a raw Safari-simulating fetch fallback to bypass security blocks.
                   </p>
                 </div>
 
@@ -164,16 +164,23 @@ export default function SettingsModal({
                 </div>
 
                 <div>
-                  <h4 className="font-bold text-neutral-800 mb-1">3. Keyboard Shortcuts & Vim Flow</h4>
+                  <h4 className="font-bold text-neutral-800 mb-1">3. Collection Right-Click Management</h4>
                   <p className="mb-2">
-                    Navigate links instantly using Vim navigation keys: press <strong>j</strong> to move down and <strong>k</strong> to move up. Action shortcuts let you perform modifications rapidly (see the Shortcuts cheat sheet).
+                    Organize bookmarks using custom collections. <strong>Right-click any Collection</strong> in the Left Sidebar to trigger a custom context menu, allowing you to <strong>Rename</strong>, <strong>Merge</strong> (combine it with another collection), <strong>Empty Content</strong>, or <strong>Delete</strong> the collection completely.
                   </p>
                 </div>
 
                 <div>
-                  <h4 className="font-bold text-neutral-800 mb-1">4. Bulk Operations & CMD+K Command Console</h4>
+                  <h4 className="font-bold text-neutral-800 mb-1">4. Bookmark Folder Imports</h4>
+                  <p className="mb-2">
+                    When importing bookmarks via standard browser exports (HTML files or JSON trees), Nidus automatically parses the folder structure, creates matching Collections, and maps your imported bookmarks directly into them.
+                  </p>
+                </div>
+
+                <div>
+                  <h4 className="font-bold text-neutral-800 mb-1">5. Vim Hotkeys & Command Console</h4>
                   <p>
-                    Check multiple rows using the selector boxes. A bulk action drawer will slide up from the bottom, allowing you to categorize, complete, or trash items in batches. Press <strong>Cmd+K</strong> (or <strong>Ctrl+K</strong>) to open the Command Palette to find and execute actions.
+                    Navigate links instantly using Vim navigation keys: press <strong>j</strong> to move down and <strong>k</strong> to move up. Perform bulk actions using selection checkboxes. Press <strong>Cmd+K</strong> (or <strong>Ctrl+K</strong>) to open the Command Palette to find and execute actions instantly.
                   </p>
                 </div>
               </div>
