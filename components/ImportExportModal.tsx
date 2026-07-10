@@ -4,7 +4,7 @@ import { X, Upload, Download, FileText, CheckCircle, AlertTriangle } from 'lucid
 interface ImportExportModalProps {
   isOpen: boolean;
   onClose: () => void;
-  onImport: (links: { url: string; title: string }[]) => Promise<void>;
+  onImport: (links: { url: string; title: string; category?: string }[]) => Promise<void>;
   onExport: () => void;
 }
 
@@ -16,31 +16,120 @@ export default function ImportExportModal({ isOpen, onClose, onImport, onExport 
 
   if (!isOpen) return null;
 
-  const parseNetscapeHTML = (htmlText: string): { url: string; title: string }[] => {
-    const regex = /<a\s+(?:[^>]*?\s+)?href="([^"]*)"[^>]*>(.*?)<\/a>/gi;
-    const links: { url: string; title: string }[] = [];
+  // Parses Netscape HTML format bookmarks recursively using a token stack
+  const parseNetscapeHTML = (htmlText: string): { url: string; title: string; category?: string }[] => {
+    const links: { url: string; title: string; category?: string }[] = [];
+    
+    // Union regex to match H3 folders, DL triggers, and Anchor links sequentially
+    const tagRegex = /(<h3[^>]*>.*?<\/h3>|<dl[^>]*>|<\/dl>|<a\s+[^>]*>.*?<\/a>)/gi;
+    
+    const folderStack: string[] = [];
+    let pendingFolderName: string | null = null;
     let match;
     
-    while ((match = regex.exec(htmlText)) !== null) {
-      const url = match[1];
-      const title = match[2].replace(/<[^>]*>/g, '').trim(); // Remove nested HTML tags in title
-      if (url && (url.startsWith('http://') || url.startsWith('https://'))) {
-        links.push({ url, title: title || url });
+    while ((match = tagRegex.exec(htmlText)) !== null) {
+      const tagContent = match[0];
+      
+      if (/<h3/i.test(tagContent)) {
+        // Extract folder title text inside H3 tags
+        const h3Inner = tagContent.match(/<h3[^>]*>(.*?)<\/h3>/i);
+        if (h3Inner) {
+          pendingFolderName = h3Inner[1].replace(/<[^>]*>/g, '').trim();
+        }
+      } 
+      else if (/<dl/i.test(tagContent)) {
+        if (pendingFolderName) {
+          folderStack.push(pendingFolderName);
+          pendingFolderName = null;
+        } else {
+          folderStack.push(folderStack.length === 0 ? 'Bookmarks' : folderStack[folderStack.length - 1]);
+        }
+      } 
+      else if (/<\/dl/i.test(tagContent)) {
+        folderStack.pop();
+      } 
+      else if (/<a/i.test(tagContent)) {
+        // Extract URL and text title from link
+        const hrefMatch = tagContent.match(/href="([^"]*)"/i) || tagContent.match(/href='([^']*)'/i);
+        const titleMatch = tagContent.match(/>(.*?)<\/a>/i);
+        
+        const url = hrefMatch ? hrefMatch[1] : '';
+        const title = titleMatch ? titleMatch[1].replace(/<[^>]*>/g, '').trim() : '';
+        
+        if (url && (url.startsWith('http://') || url.startsWith('https://'))) {
+          let category = folderStack[folderStack.length - 1] || 'Unsorted';
+          
+          // Clean standard browser system folder titles
+          if (
+            category === 'Bookmarks Bar' || 
+            category === 'Bookmarks' || 
+            category === 'Other Bookmarks' || 
+            category === 'Mobile Bookmarks' ||
+            category === 'Bookmarks menu' ||
+            category === 'BookmarksMenu'
+          ) {
+            category = 'Unsorted';
+          }
+          
+          links.push({ url, title: title || url, category });
+        }
       }
     }
     return links;
   };
 
-  const parseJSON = (jsonText: string): { url: string; title: string }[] => {
+  // Parses simple JSON arrays or full Chrome tree-backups recursively
+  const parseJSON = (jsonText: string): { url: string; title: string; category?: string }[] => {
     const data = JSON.parse(jsonText);
-    const list = Array.isArray(data) ? data : data.bookmarks || [];
-    const links: { url: string; title: string }[] = [];
+    const links: { url: string; title: string; category?: string }[] = [];
     
-    for (const item of list) {
-      const url = item.url || item.href;
-      const title = item.title || item.name || url;
-      if (url && (url.startsWith('http://') || url.startsWith('https://'))) {
-        links.push({ url, title });
+    const traverse = (node: any, currentFolder: string) => {
+      if (!node) return;
+      
+      // Folder Node
+      if (node.type === 'folder' || node.children) {
+        const folderName = node.name || currentFolder;
+        const cleanFolder = (
+          folderName === 'Bookmarks bar' || 
+          folderName === 'Other bookmarks' || 
+          folderName === 'Synced bookmarks' ||
+          folderName === 'Bookmarks'
+        ) ? 'Unsorted' : folderName;
+          
+        if (Array.isArray(node.children)) {
+          node.children.forEach((child: any) => traverse(child, cleanFolder));
+        }
+      } 
+      // Link URL Node
+      else if (node.type === 'url' || node.url) {
+        const url = node.url || node.href;
+        const title = node.name || node.title || url;
+        if (url && (url.startsWith('http://') || url.startsWith('https://'))) {
+          links.push({ 
+            url, 
+            title, 
+            category: currentFolder === 'Bookmarks' ? 'Unsorted' : currentFolder 
+          });
+        }
+      }
+    };
+
+    // If native Chrome JSON profile backup
+    if (data.roots) {
+      Object.keys(data.roots).forEach((key) => {
+        traverse(data.roots[key], 'Unsorted');
+      });
+    } 
+    // Standard flat array import
+    else {
+      const list = Array.isArray(data) ? data : data.bookmarks || [];
+      for (const item of list) {
+        const url = item.url || item.href;
+        const title = item.title || item.name || url;
+        const category = item.category || item.folder || 'Unsorted';
+        if (url && (url.startsWith('http://') || url.startsWith('https://'))) {
+          links.push({ url, title, category });
+        }
       }
     }
     return links;
@@ -57,7 +146,7 @@ export default function ImportExportModal({ isOpen, onClose, onImport, onExport 
     reader.onload = async (event) => {
       try {
         const text = event.target?.result as string;
-        let links: { url: string; title: string }[] = [];
+        let links: { url: string; title: string; category?: string }[] = [];
 
         if (file.name.endsWith('.html') || file.name.endsWith('.htm')) {
           links = parseNetscapeHTML(text);
@@ -97,7 +186,7 @@ export default function ImportExportModal({ isOpen, onClose, onImport, onExport 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-xs p-4">
       <div 
-        className="w-full max-w-md bg-white border border-neutral-200/60 rounded-lg shadow-xl overflow-hidden flex flex-col transition-all-custom scale-100"
+        className="w-full max-w-md bg-white border border-neutral-250 rounded-lg shadow-xl overflow-hidden flex flex-col transition-all-custom scale-100"
         onClick={(e) => e.stopPropagation()}
       >
         {/* Header */}
@@ -114,7 +203,7 @@ export default function ImportExportModal({ isOpen, onClose, onImport, onExport 
         {/* Content */}
         <div className="p-5 flex flex-col gap-4 text-xs">
           <p className="text-neutral-500 leading-relaxed font-medium">
-            Migrate your bookmarks seamlessly. Upload a standard Chrome/Firefox export HTML file or a custom JSON list. You can also download your full library.
+            Migrate your bookmarks seamlessly. Upload a standard Chrome/Firefox export HTML file or a custom JSON list. Folders will be converted to Collections.
           </p>
 
           <div className="grid grid-cols-2 gap-3 mt-1">
@@ -158,7 +247,7 @@ export default function ImportExportModal({ isOpen, onClose, onImport, onExport 
           {status === 'saving' && (
             <div className="mt-2 p-3 bg-neutral-50 rounded-lg flex items-center gap-3 text-neutral-600 font-medium">
               <div className="animate-spin rounded-full h-4 w-4 border-2 border-neutral-300 border-t-neutral-600" />
-              <span>Saving {parsedCount} links to Supabase...</span>
+              <span>Saving {parsedCount} links to database...</span>
             </div>
           )}
 

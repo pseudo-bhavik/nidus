@@ -14,6 +14,7 @@ interface LeftSidebarProps {
   onCloseSidebar: () => void;
   onAddCategory: () => void;
   onDeleteCategory: (category: string) => void;
+  onCollectionContextMenu: (e: React.MouseEvent, category: string) => void;
   categories: string[];
 }
 
@@ -29,6 +30,7 @@ export default function LeftSidebar({
   onCloseSidebar,
   onAddCategory,
   onDeleteCategory,
+  onCollectionContextMenu,
   categories,
 }: LeftSidebarProps) {
   // Aggregate categories and counts (supporting bookmarks in multiple collections)
@@ -141,20 +143,32 @@ export default function LeftSidebar({
             </button>
           </div>
 
-          <div className="flex flex-col gap-0.5 max-h-[300px] overflow-y-auto">
+          <div className="flex flex-col gap-0.5 max-h-[52vh] overflow-y-auto">
             {sortedCategories.map((cat) => {
               if (cat === 'Unsorted') return null;
               
               const isSelected = currentView === cat;
               return (
-                <button
+                <div
                   key={cat}
                   onClick={() => onViewChange(cat)}
+                  onContextMenu={(e) => {
+                    e.preventDefault();
+                    onCollectionContextMenu(e, cat);
+                  }}
                   className={`w-full px-3 py-1.5 rounded-md flex items-center justify-between font-bold cursor-pointer transition-all-custom group ${
                     isSelected
                       ? 'bg-neutral-900/5 text-neutral-800'
                       : 'text-neutral-500 hover:bg-neutral-900/3 hover:text-neutral-700'
                   }`}
+                  role="button"
+                  tabIndex={0}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' || e.key === ' ') {
+                      e.preventDefault();
+                      onViewChange(cat);
+                    }
+                  }}
                 >
                   <div className="flex items-center gap-2 truncate mr-2">
                     <Folder className="w-3.5 h-3.5 shrink-0 text-neutral-400" />
@@ -166,6 +180,7 @@ export default function LeftSidebar({
                       {categoriesMap[cat] || 0}
                     </span>
                     <button
+                      type="button"
                       onClick={(e) => {
                         e.stopPropagation();
                         onDeleteCategory(cat);
@@ -176,7 +191,7 @@ export default function LeftSidebar({
                       <Trash2 className="w-3 h-3" />
                     </button>
                   </div>
-                </button>
+                </div>
               );
             })}
 

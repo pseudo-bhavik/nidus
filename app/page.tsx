@@ -12,7 +12,7 @@ import AuthModal from '../components/AuthModal';
 import SettingsModal from '../components/SettingsModal';
 import EditBookmarkModal from '../components/EditBookmarkModal';
 import ContextMenu from '../components/ContextMenu';
-import { AlertTriangle, Info, Terminal, FolderPlus } from 'lucide-react';
+import { AlertTriangle, Info, Terminal, FolderPlus, Edit2, GitMerge, Eraser, Trash2 } from 'lucide-react';
 
 const SEED_BOOKMARKS: Bookmark[] = [
   {
@@ -97,6 +97,18 @@ export default function Dashboard() {
   const [collectionToDelete, setCollectionToDelete] = useState<string | null>(null);
   const [isCreateCollectionOpen, setIsCreateCollectionOpen] = useState(false);
   const [newCollectionName, setNewCollectionName] = useState('');
+  
+  // Custom Collection context menu and management states
+  const [collectionContextMenu, setCollectionContextMenu] = useState<{
+    x: number;
+    y: number;
+    visible: boolean;
+    category: string | null;
+  }>({ x: 0, y: 0, visible: false, category: null });
+  const [collectionToRename, setCollectionToRename] = useState<string | null>(null);
+  const [newRenameName, setNewRenameName] = useState('');
+  const [collectionToMerge, setCollectionToMerge] = useState<string | null>(null);
+  const [targetMergeCollection, setTargetMergeCollection] = useState('');
 
   // v1.4 Theme Accent & Priority Filter states
   const [activeTheme, setActiveTheme] = useState('orange');
@@ -451,6 +463,185 @@ export default function Dashboard() {
     }
   };
 
+  const handleCollectionContextMenu = (e: React.MouseEvent, category: string) => {
+    e.preventDefault();
+    setCollectionContextMenu({
+      x: e.clientX,
+      y: e.clientY,
+      visible: true,
+      category,
+    });
+  };
+
+  const handleRenameCollection = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const oldName = collectionToRename;
+    const newName = newRenameName.trim();
+    if (!oldName || !newName || oldName === newName) {
+      setCollectionToRename(null);
+      return;
+    }
+
+    // A. Update local category list
+    const updatedCustom = customCategories.map((c) => c === oldName ? newName : c);
+    setCustomCategories(updatedCustom);
+    localStorage.setItem('antigravity_custom_categories', JSON.stringify(updatedCustom));
+
+    // B. Update currentView if it was active
+    if (currentView === oldName) {
+      setCurrentView(newName);
+    }
+
+    // C. Update bookmarks local state
+    const updatedBookmarks = bookmarks.map((b) => {
+      if (!b.category) return b;
+      const cats = b.category.split(',').map((s) => s.trim()).filter(Boolean);
+      if (cats.includes(oldName)) {
+        const filtered = cats.map((c) => c === oldName ? newName : c);
+        return { ...b, category: filtered.join(', ') };
+      }
+      return b;
+    });
+    setBookmarks(updatedBookmarks);
+
+    // Close modal
+    setCollectionToRename(null);
+    setNewRenameName('');
+
+    // D. Sync database
+    if (isDbConnected) {
+      try {
+        const toUpdate = bookmarks.filter((b) => {
+          if (!b.category) return false;
+          const cats = b.category.split(',').map((s) => s.trim()).filter(Boolean);
+          return cats.includes(oldName);
+        });
+
+        for (const b of toUpdate) {
+          const cats = b.category.split(',').map((s) => s.trim()).filter(Boolean);
+          const filtered = cats.map((c) => c === oldName ? newName : c);
+          await supabase
+            .from('bookmarks')
+            .update({ category: filtered.join(', ') })
+            .eq('id', b.id);
+        }
+      } catch (err) {
+        console.error('Failed to sync collection rename to Supabase:', err);
+      }
+    }
+  };
+
+  const handleMergeCollection = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const sourceName = collectionToMerge;
+    const targetName = targetMergeCollection;
+    if (!sourceName || !targetName || sourceName === targetName) {
+      setCollectionToMerge(null);
+      return;
+    }
+
+    // A. Remove source collection from custom categories list
+    const updatedCustom = customCategories.filter((c) => c !== sourceName);
+    setCustomCategories(updatedCustom);
+    localStorage.setItem('antigravity_custom_categories', JSON.stringify(updatedCustom));
+
+    // B. Update currentView if it was source to target
+    if (currentView === sourceName) {
+      setCurrentView(targetName);
+    }
+
+    // C. Update bookmarks local state
+    const updatedBookmarks = bookmarks.map((b) => {
+      if (!b.category) return b;
+      const cats = b.category.split(',').map((s) => s.trim()).filter(Boolean);
+      if (cats.includes(sourceName)) {
+        // Filter out source, make sure target exists
+        const withoutSource = cats.filter((c) => c !== sourceName);
+        if (!withoutSource.includes(targetName)) {
+          withoutSource.push(targetName);
+        }
+        return { ...b, category: withoutSource.join(', ') };
+      }
+      return b;
+    });
+    setBookmarks(updatedBookmarks);
+
+    // Close modal
+    setCollectionToMerge(null);
+    setTargetMergeCollection('');
+
+    // D. Sync database
+    if (isDbConnected) {
+      try {
+        const toUpdate = bookmarks.filter((b) => {
+          if (!b.category) return false;
+          const cats = b.category.split(',').map((s) => s.trim()).filter(Boolean);
+          return cats.includes(sourceName);
+        });
+
+        for (const b of toUpdate) {
+          const cats = b.category.split(',').map((s) => s.trim()).filter(Boolean);
+          const withoutSource = cats.filter((c) => c !== sourceName);
+          if (!withoutSource.includes(targetName)) {
+            withoutSource.push(targetName);
+          }
+          await supabase
+            .from('bookmarks')
+            .update({ category: withoutSource.join(', ') })
+            .eq('id', b.id);
+        }
+      } catch (err) {
+        console.error('Failed to sync collection merge to Supabase:', err);
+      }
+    }
+  };
+
+  const handleEmptyCollection = async (catToEmpty: string) => {
+    // Custom inline confirm warning is handled natively for convenience or inline later,
+    // let's do a beautiful browser confirmation since the user didn't request a custom modal for empty,
+    // or just let it run. Let's do a quick confirm check:
+    const confirmed = confirm(
+      `Are you sure you want to empty the Collection "${catToEmpty}"?\n\nAll bookmarks in this collection will be moved back to Unsorted.`
+    );
+    if (!confirmed) return;
+
+    // A. Update local bookmarks
+    const updatedBookmarks = bookmarks.map((b) => {
+      if (!b.category) return b;
+      const cats = b.category.split(',').map((s) => s.trim()).filter(Boolean);
+      if (cats.includes(catToEmpty)) {
+        const filtered = cats.filter((c) => c !== catToEmpty);
+        const newCategoryString = filtered.length > 0 ? filtered.join(', ') : 'Unsorted';
+        return { ...b, category: newCategoryString };
+      }
+      return b;
+    });
+    setBookmarks(updatedBookmarks);
+
+    // B. Sync database
+    if (isDbConnected) {
+      try {
+        const toUpdate = bookmarks.filter((b) => {
+          if (!b.category) return false;
+          const cats = b.category.split(',').map((s) => s.trim()).filter(Boolean);
+          return cats.includes(catToEmpty);
+        });
+
+        for (const b of toUpdate) {
+          const cats = b.category.split(',').map((s) => s.trim()).filter(Boolean);
+          const filtered = cats.filter((c) => c !== catToEmpty);
+          const newCategoryString = filtered.length > 0 ? filtered.join(', ') : 'Unsorted';
+          await supabase
+            .from('bookmarks')
+            .update({ category: newCategoryString })
+            .eq('id', b.id);
+        }
+      } catch (err) {
+        console.error('Failed to sync empty collection updates to Supabase:', err);
+      }
+    }
+  };
+
   // 2. Update Bookmark
   const handleUpdateBookmark = async (id: string, updates: Partial<Bookmark>) => {
     // Optimistic UI updates
@@ -613,7 +804,22 @@ export default function Dashboard() {
   };
 
   // 10. Bookmarks Import Queue Handler
-  const handleImportBookmarks = async (importedLinks: { url: string; title: string }[]) => {
+  const handleImportBookmarks = async (importedLinks: { url: string; title: string; category?: string }[]) => {
+    // Register any new unique imported categories as custom Collections
+    const importedCategories = Array.from(
+      new Set(
+        importedLinks
+          .map((link) => link.category)
+          .filter((cat): cat is string => !!cat && cat !== 'Unsorted')
+      )
+    );
+
+    if (importedCategories.length > 0) {
+      const mergedCats = Array.from(new Set([...customCategories, ...importedCategories]));
+      setCustomCategories(mergedCats);
+      localStorage.setItem('antigravity_custom_categories', JSON.stringify(mergedCats));
+    }
+
     // Stage 1: Build basic bookmark objects for instant UI reactivity
     const newItems: Bookmark[] = importedLinks.map((link) => {
       let domain = 'domain.xyz';
@@ -629,7 +835,7 @@ export default function Dashboard() {
         description: null,
         domain,
         thumbnail_url: null,
-        category: 'Unsorted',
+        category: link.category || 'Unsorted',
         priority: 'Medium',
         is_completed: false,
         is_trashed: false,
@@ -866,7 +1072,7 @@ export default function Dashboard() {
   }, [filteredBookmarks, activeBookmark, isCommandPaletteOpen, isImportExportOpen, isSettingsOpen, isEditModalOpen]);
 
   return (
-    <div className="flex h-full w-full overflow-hidden text-xs text-neutral-800" onClick={() => setContextMenu(prev => ({ ...prev, visible: false }))}>
+    <div className="flex h-full w-full overflow-hidden text-xs text-neutral-800" onClick={() => { setContextMenu(prev => ({ ...prev, visible: false })); setCollectionContextMenu(prev => ({ ...prev, visible: false })); }}>
       {/* Sidebar navigation container with transition animations */}
       <div
         className={`h-full border-r border-border-color bg-sidebar-bg transition-all duration-300 ease-in-out overflow-hidden flex shrink-0 md:relative absolute z-30 shadow-xl md:shadow-none ${
@@ -888,6 +1094,7 @@ export default function Dashboard() {
           onCloseSidebar={() => setIsSidebarOpen(false)}
           onAddCategory={handlePromptAddCategory}
           onDeleteCategory={handleDeleteCategory}
+          onCollectionContextMenu={handleCollectionContextMenu}
           categories={categoriesList}
         />
       </div>
@@ -1147,6 +1354,197 @@ export default function Dashboard() {
                 style={{ padding: '7px 12px', backgroundColor: 'var(--accent-color)', border: 'none', color: '#ffffff', fontWeight: '800', borderRadius: '4px', cursor: 'pointer', fontSize: '11px' }}
               >
                 Create Collection
+              </button>
+            </div>
+          </form>
+        </div>
+      )}
+
+      {/* Custom Collection Context Menu */}
+      {collectionContextMenu.visible && collectionContextMenu.category && (
+        <div 
+          style={{ position: 'fixed', top: collectionContextMenu.y, left: collectionContextMenu.x, zIndex: 90 }}
+          className="bg-white border border-neutral-250 rounded-md shadow-lg py-1 min-w-[150px] flex flex-col font-medium animate-fade-in text-[11px]"
+          onClick={(e) => e.stopPropagation()}
+        >
+          {/* Title / Header */}
+          <div className="px-3 py-1.5 text-[9px] text-neutral-400 font-bold border-b border-neutral-100 uppercase tracking-wider mb-0.5 select-none truncate max-w-[180px]">
+            {collectionContextMenu.category}
+          </div>
+
+          {/* Rename option */}
+          <button
+            type="button"
+            onClick={() => {
+              setNewRenameName(collectionContextMenu.category!);
+              setCollectionToRename(collectionContextMenu.category);
+              setCollectionContextMenu(prev => ({ ...prev, visible: false }));
+            }}
+            className="w-full px-3 py-1.5 hover:bg-neutral-50 text-neutral-700 flex items-center gap-2 cursor-pointer transition-all-custom text-left font-semibold"
+          >
+            <Edit2 className="w-3.5 h-3.5 text-neutral-400" />
+            <span>Rename</span>
+          </button>
+
+          {/* Merge option */}
+          <button
+            type="button"
+            onClick={() => {
+              setCollectionToMerge(collectionContextMenu.category);
+              setTargetMergeCollection('');
+              setCollectionContextMenu(prev => ({ ...prev, visible: false }));
+            }}
+            className="w-full px-3 py-1.5 hover:bg-neutral-50 flex items-center gap-2 cursor-pointer transition-all-custom text-left font-semibold"
+            style={{ color: 'var(--accent-color)' }}
+          >
+            <GitMerge className="w-3.5 h-3.5" style={{ color: 'var(--accent-color)' }} />
+            <span>Merge Collection</span>
+          </button>
+
+          {/* Empty option */}
+          <button
+            type="button"
+            onClick={() => {
+              handleEmptyCollection(collectionContextMenu.category!);
+              setCollectionContextMenu(prev => ({ ...prev, visible: false }));
+            }}
+            className="w-full px-3 py-1.5 hover:bg-neutral-50 text-neutral-700 flex items-center gap-2 cursor-pointer transition-all-custom text-left font-semibold"
+          >
+            <Eraser className="w-3.5 h-3.5 text-neutral-400" />
+            <span>Empty Content</span>
+          </button>
+
+          {/* Separator */}
+          <hr className="border-neutral-100 my-0.5" />
+
+          {/* Delete option */}
+          <button
+            type="button"
+            onClick={() => {
+              handleDeleteCategory(collectionContextMenu.category!);
+              setCollectionContextMenu(prev => ({ ...prev, visible: false }));
+            }}
+            className="w-full px-3 py-1.5 hover:bg-red-50 text-red-600 flex items-center gap-2 cursor-pointer transition-all-custom text-left font-bold"
+          >
+            <Trash2 className="w-3.5 h-3.5 text-red-500" />
+            <span>Delete</span>
+          </button>
+        </div>
+      )}
+
+      {/* Rename Collection Modal */}
+      {collectionToRename && (
+        <div 
+          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/35 backdrop-blur-xs animate-fade-in"
+          style={{ position: 'fixed', inset: 0, zIndex: 100, display: 'flex', alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(0,0,0,0.3)', backdropFilter: 'blur(2px)' }}
+        >
+          <form 
+            onSubmit={handleRenameCollection}
+            className="bg-white border border-neutral-250 flex flex-col"
+            style={{ width: '100%', maxWidth: '350px', backgroundColor: '#ffffff', border: '1px solid rgba(17, 17, 17, 0.12)', borderRadius: '6px', boxShadow: '0 4px 16px rgba(0,0,0,0.08)', overflow: 'hidden', display: 'flex', flexDirection: 'column' }}
+          >
+            {/* Modal Header */}
+            <div 
+              className="border-b border-neutral-100 flex items-center"
+              style={{ padding: '16px 20px', borderBottom: '1px solid rgba(17, 17, 17, 0.06)', display: 'flex', alignItems: 'center', gap: '8px', backgroundColor: '#fbfbfa' }}
+            >
+              <Edit2 style={{ width: '16px', height: '16px', color: 'var(--accent-color)' }} />
+              <h3 style={{ margin: 0, fontWeight: '750', fontSize: '12px', color: '#111111', letterSpacing: '-0.02em' }}>Rename Collection</h3>
+            </div>
+
+            {/* Modal Body */}
+            <div style={{ padding: '20px', display: 'flex', flexDirection: 'column', gap: '8px' }}>
+              <label style={{ fontWeight: '700', fontSize: '9px', color: '#6a6a6a', textTransform: 'uppercase', letterSpacing: '0.05em' }}>New Name</label>
+              <input
+                type="text"
+                value={newRenameName}
+                onChange={(e) => setNewRenameName(e.target.value)}
+                style={{ width: '100%', padding: '8px 12px', border: '1px solid rgba(17, 17, 17, 0.12)', borderRadius: '4px', outline: 'none', fontWeight: '600', fontSize: '12px', backgroundColor: '#ffffff' }}
+                required
+                autoFocus
+              />
+            </div>
+
+            {/* Modal Footer Actions */}
+            <div 
+              style={{ padding: '12px 20px', backgroundColor: '#fbfbfa', borderTop: '1px solid rgba(17, 17, 17, 0.06)', display: 'flex', justifyContent: 'flex-end', gap: '8px' }}
+            >
+              <button
+                type="button"
+                onClick={() => setCollectionToRename(null)}
+                style={{ padding: '7px 12px', backgroundColor: 'transparent', border: '1px solid rgba(17, 17, 17, 0.12)', color: '#111111', fontWeight: '700', borderRadius: '4px', cursor: 'pointer', fontSize: '11px' }}
+              >
+                Cancel
+              </button>
+              <button
+                type="submit"
+                style={{ padding: '7px 12px', backgroundColor: 'var(--accent-color)', border: 'none', color: '#ffffff', fontWeight: '800', borderRadius: '4px', cursor: 'pointer', fontSize: '11px' }}
+              >
+                Rename
+              </button>
+            </div>
+          </form>
+        </div>
+      )}
+
+      {/* Merge Collection Modal */}
+      {collectionToMerge && (
+        <div 
+          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/35 backdrop-blur-xs animate-fade-in"
+          style={{ position: 'fixed', inset: 0, zIndex: 100, display: 'flex', alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(0,0,0,0.3)', backdropFilter: 'blur(2px)' }}
+        >
+          <form 
+            onSubmit={handleMergeCollection}
+            className="bg-white border border-neutral-250 flex flex-col"
+            style={{ width: '100%', maxWidth: '350px', backgroundColor: '#ffffff', border: '1px solid rgba(17, 17, 17, 0.12)', borderRadius: '6px', boxShadow: '0 4px 16px rgba(0,0,0,0.08)', overflow: 'hidden', display: 'flex', flexDirection: 'column' }}
+          >
+            {/* Modal Header */}
+            <div 
+              className="border-b border-neutral-100 flex items-center"
+              style={{ padding: '16px 20px', borderBottom: '1px solid rgba(17, 17, 17, 0.06)', display: 'flex', alignItems: 'center', gap: '8px', backgroundColor: '#fbfbfa' }}
+            >
+              <GitMerge style={{ width: '16px', height: '16px', color: 'var(--accent-color)' }} />
+              <h3 style={{ margin: 0, fontWeight: '750', fontSize: '12px', color: '#111111', letterSpacing: '-0.02em' }}>Merge Collection</h3>
+            </div>
+
+            {/* Modal Body */}
+            <div style={{ padding: '20px', display: 'flex', flexDirection: 'column', gap: '8px' }}>
+              <p style={{ fontSize: '11px', color: '#6a6a6a', fontWeight: '600', lineHeight: '1.5', margin: '0 0 4px 0' }}>
+                Merge collection <strong style={{ color: '#111111' }}>&ldquo;{collectionToMerge}&rdquo;</strong> into:
+              </p>
+              <label style={{ fontWeight: '700', fontSize: '9px', color: '#6a6a6a', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Select Target Collection</label>
+              <select
+                value={targetMergeCollection}
+                onChange={(e) => setTargetMergeCollection(e.target.value)}
+                style={{ width: '100%', padding: '8px 12px', border: '1px solid rgba(17, 17, 17, 0.12)', borderRadius: '4px', outline: 'none', fontWeight: '600', fontSize: '12px', backgroundColor: '#ffffff' }}
+                required
+              >
+                <option value="" disabled>-- Select Collection --</option>
+                {categoriesList
+                  .filter((cat) => cat !== collectionToMerge)
+                  .map((cat) => (
+                    <option key={cat} value={cat}>{cat}</option>
+                  ))}
+              </select>
+            </div>
+
+            {/* Modal Footer Actions */}
+            <div 
+              style={{ padding: '12px 20px', backgroundColor: '#fbfbfa', borderTop: '1px solid rgba(17, 17, 17, 0.06)', display: 'flex', justifyContent: 'flex-end', gap: '8px' }}
+            >
+              <button
+                type="button"
+                onClick={() => setCollectionToMerge(null)}
+                style={{ padding: '7px 12px', backgroundColor: 'transparent', border: '1px solid rgba(17, 17, 17, 0.12)', color: '#111111', fontWeight: '700', borderRadius: '4px', cursor: 'pointer', fontSize: '11px' }}
+              >
+                Cancel
+              </button>
+              <button
+                type="submit"
+                disabled={!targetMergeCollection}
+                style={{ padding: '7px 12px', backgroundColor: 'var(--accent-color)', border: 'none', color: '#ffffff', fontWeight: '800', borderRadius: '4px', cursor: targetMergeCollection ? 'pointer' : 'not-allowed', fontSize: '11px', opacity: targetMergeCollection ? 1 : 0.5 }}
+              >
+                Merge
               </button>
             </div>
           </form>
