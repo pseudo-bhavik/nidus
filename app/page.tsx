@@ -1133,7 +1133,11 @@ export default function Dashboard() {
             onOpenSidebar={() => setIsSidebarOpen(true)}
           />
         ) : currentView === 'canvas' ? (
-          <WhiteboardCanvas activeTheme={activeTheme} />
+          <WhiteboardCanvas
+            activeTheme={activeTheme}
+            isSidebarOpen={isSidebarOpen}
+            onOpenSidebar={() => setIsSidebarOpen(true)}
+          />
         ) : (
           <CentralMonitor
             bookmarks={bookmarks}
