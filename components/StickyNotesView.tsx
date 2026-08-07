@@ -3,7 +3,7 @@
 import React, { useState, useEffect } from 'react';
 import { 
   StickyNote as StickyNoteIcon, Plus, Search, Pin, Trash2, 
-  Copy, Check, Palette, Sparkles, Filter
+  Copy, Check, Palette, Sparkles, Filter, X
 } from 'lucide-react';
 import { StickyNote } from '../lib/types';
 
@@ -201,15 +201,25 @@ export default function StickyNotesView({ isSidebarOpen, onOpenSidebar }: Sticky
 
         {/* Right Controls: Search & New Note Button */}
         <div className="flex items-center gap-2">
-          <div className="relative flex items-center">
-            <Search className="w-3.5 h-3.5 absolute left-2.5 text-neutral-400 pointer-events-none" />
+          <div className="relative flex items-center w-40 sm:w-56">
+            <Search className="w-3.5 h-3.5 absolute left-3 text-neutral-400 pointer-events-none shrink-0" />
             <input
               type="text"
               placeholder="Search notes..."
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
-              className="pl-8 pr-3 py-1 bg-white border border-neutral-250 rounded-md text-[11px] font-medium outline-none w-36 focus:w-48 transition-all duration-200"
+              className="w-full pl-9 pr-7 py-1.5 bg-white border border-neutral-250 rounded-md text-xs font-semibold outline-none focus:border-hn-orange/50 focus:ring-1 focus:ring-hn-orange/10 transition-all-custom"
             />
+            {searchQuery && (
+              <button
+                type="button"
+                onClick={() => setSearchQuery('')}
+                className="absolute right-2 p-0.5 hover:bg-neutral-200/70 rounded-full text-neutral-400 hover:text-neutral-700 cursor-pointer transition-all-custom"
+                title="Clear Search"
+              >
+                <X className="w-3.5 h-3.5" />
+              </button>
+            )}
           </div>
 
           <button

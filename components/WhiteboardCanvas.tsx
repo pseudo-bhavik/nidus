@@ -17,8 +17,8 @@ interface WhiteboardCanvasProps {
   onOpenSidebar?: () => void;
 }
 
-// React Error Boundary for client safety
-class CanvasErrorBoundary extends Component<{ fallback: ReactNode; children: ReactNode }, { hasError: boolean }> {
+// React Error Boundary for client safety (logs error without breaking UI layout)
+class CanvasErrorBoundary extends Component<{ children: ReactNode }, { hasError: boolean }> {
   constructor(props: any) {
     super(props);
     this.state = { hasError: false };
@@ -30,10 +30,30 @@ class CanvasErrorBoundary extends Component<{ fallback: ReactNode; children: Rea
     console.warn('Canvas Engine caught exception:', err);
   }
   render() {
-    if (this.state.hasError) return this.props.fallback;
     return this.props.children;
   }
 }
+
+// Helper to safely get Rough.js canvas instance across ES Module and CJS module interops
+const getRoughCanvas = (canvas: HTMLCanvasElement) => {
+  try {
+    if (typeof rough === 'function') {
+      return (rough as any)(canvas);
+    }
+    if (rough && typeof (rough as any).canvas === 'function') {
+      return (rough as any).canvas(canvas);
+    }
+    if (rough && (rough as any).default && typeof (rough as any).default.canvas === 'function') {
+      return (rough as any).default.canvas(canvas);
+    }
+    if (rough && typeof (rough as any).default === 'function') {
+      return (rough as any).default(canvas);
+    }
+  } catch (e) {
+    console.warn('Rough.js instance init fallback:', e);
+  }
+  return null;
+};
 
 // Palette presets matching Excalidraw screenshot 2
 const STROKE_COLORS = ['#000000', '#e03131', '#2f9e44', '#1971c2', '#f08c00', '#121212'];
@@ -50,11 +70,11 @@ interface CanvasElement {
   text?: string;
   strokeColor: string;
   bgColor: string;
-  strokeWidth: number; // 1, 2, 4
+  strokeWidth: number;
   strokeStyle: 'solid' | 'dashed' | 'dotted';
-  roughness: number; // 0 = architect, 1 = artist, 2 = cartoon
-  cornerRadius: boolean; // sharp vs rounded
-  opacity: number; // 0 to 100
+  roughness: number;
+  cornerRadius: boolean;
+  opacity: number;
 }
 
 const DEFAULT_DOC: WhiteboardCanvasDoc = {
@@ -76,7 +96,7 @@ export default function WhiteboardCanvas({
   const [excalidrawLoadFailed, setExcalidrawLoadFailed] = useState(false);
   const [excalidrawAPI, setExcalidrawAPI] = useState<any>(null);
 
-  // Fallback / Standalone Rough.js Engine state
+  // Canvas Engine state
   const [docs, setDocs] = useState<WhiteboardCanvasDoc[]>([]);
   const [activeDocId, setActiveDocId] = useState<string>('doc-default');
   const [isRenaming, setIsRenaming] = useState(false);
@@ -91,12 +111,12 @@ export default function WhiteboardCanvas({
   const [bgColor, setBgColor] = useState('transparent');
   const [strokeWidth, setStrokeWidth] = useState(2);
   const [strokeStyle, setStrokeStyle] = useState<'solid' | 'dashed' | 'dotted'>('solid');
-  const [roughness, setRoughness] = useState(1); // 0 = architect, 1 = artist, 2 = cartoon
+  const [roughness, setRoughness] = useState(1);
   const [cornerRadius, setCornerRadius] = useState(true);
   const [opacity, setOpacity] = useState(100);
 
   // Infinite Canvas Pan & Zoom State
-  const [zoom, setZoom] = useState(1.0); // 0.1 to 3.0
+  const [zoom, setZoom] = useState(1.0);
   const [panOffset, setPanOffset] = useState<{ x: number; y: number }>({ x: 0, y: 0 });
   const [isPanning, setIsPanning] = useState(false);
   const [panStart, setPanStart] = useState<{ x: number; y: number }>({ x: 0, y: 0 });
@@ -114,7 +134,7 @@ export default function WhiteboardCanvas({
 
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
 
-  // Client-Side Only Excalidraw Import (Prevents SSR server-side prerender crashes!)
+  // Try dynamic client import of real Excalidraw package
   useEffect(() => {
     let isMounted = true;
     import('@excalidraw/excalidraw')
@@ -124,13 +144,13 @@ export default function WhiteboardCanvas({
         }
       })
       .catch((err) => {
-        console.warn('Excalidraw module client load info:', err);
+        console.warn('Excalidraw client load notice:', err);
         if (isMounted) setExcalidrawLoadFailed(true);
       });
     return () => { isMounted = false; };
   }, []);
 
-  // Sync canvas background stroke when dark mode toggled
+  // Sync canvas stroke color on theme toggle
   useEffect(() => {
     if (canvasTheme === 'dark' && strokeColor === '#000000') {
       setStrokeColor('#ffffff');
@@ -273,7 +293,7 @@ export default function WhiteboardCanvas({
     }
   };
 
-  // Rough.js Infinite Canvas Drawing Effect
+  // Canvas Hand-Drawn Rendering Effect
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
@@ -287,8 +307,8 @@ export default function WhiteboardCanvas({
       canvas.height = rect.height;
     }
 
-    // Initialize Rough.js canvas instance
-    const rc = rough.canvas(canvas);
+    // Safely get Rough.js instance with fallbacks
+    const rc = getRoughCanvas(canvas);
 
     // Clear background
     ctx.fillStyle = canvasTheme === 'dark' ? '#121212' : '#ffffff';
@@ -313,7 +333,7 @@ export default function WhiteboardCanvas({
       }
     }
 
-    // Render elements using Rough.js hand-drawn graphics
+    // Render elements using Rough.js or 2D Context fallback
     elements.forEach((elem) => {
       ctx.globalAlpha = (elem.opacity ?? 100) / 100;
 
@@ -345,7 +365,17 @@ export default function WhiteboardCanvas({
         elem.points.forEach((pt) => ctx.lineTo(pt.x, pt.y));
         ctx.stroke();
       } else if (elem.type === 'rect' && elem.x !== undefined && elem.y !== undefined && elem.width && elem.height) {
-        rc.rectangle(elem.x, elem.y, elem.width, elem.height, roughOptions);
+        if (rc) {
+          rc.rectangle(elem.x, elem.y, elem.width, elem.height, roughOptions);
+        } else {
+          ctx.strokeStyle = elem.strokeColor;
+          ctx.lineWidth = elem.strokeWidth;
+          if (elem.bgColor !== 'transparent') {
+            ctx.fillStyle = elem.bgColor;
+            ctx.fillRect(elem.x, elem.y, elem.width, elem.height);
+          }
+          ctx.strokeRect(elem.x, elem.y, elem.width, elem.height);
+        }
       } else if (elem.type === 'diamond' && elem.x !== undefined && elem.y !== undefined && elem.width && elem.height) {
         const cx = elem.x + elem.width / 2;
         const cy = elem.y + elem.height / 2;
@@ -355,25 +385,75 @@ export default function WhiteboardCanvas({
           [cx, elem.y + elem.height],
           [elem.x, cy],
         ];
-        rc.polygon(pts, roughOptions);
+        if (rc) {
+          rc.polygon(pts, roughOptions);
+        } else {
+          ctx.strokeStyle = elem.strokeColor;
+          ctx.lineWidth = elem.strokeWidth;
+          ctx.beginPath();
+          ctx.moveTo(cx, elem.y);
+          ctx.lineTo(elem.x + elem.width, cy);
+          ctx.lineTo(cx, elem.y + elem.height);
+          ctx.lineTo(elem.x, cy);
+          ctx.closePath();
+          if (elem.bgColor !== 'transparent') {
+            ctx.fillStyle = elem.bgColor;
+            ctx.fill();
+          }
+          ctx.stroke();
+        }
       } else if (elem.type === 'circle' && elem.x !== undefined && elem.y !== undefined && elem.width && elem.height) {
         const rx = Math.abs(elem.width);
         const ry = Math.abs(elem.height);
         const cx = elem.x + elem.width / 2;
         const cy = elem.y + elem.height / 2;
-        rc.ellipse(cx, cy, rx, ry, roughOptions);
+        if (rc) {
+          rc.ellipse(cx, cy, rx, ry, roughOptions);
+        } else {
+          ctx.strokeStyle = elem.strokeColor;
+          ctx.lineWidth = elem.strokeWidth;
+          ctx.beginPath();
+          ctx.ellipse(cx, cy, Math.abs(elem.width) / 2, Math.abs(elem.height) / 2, 0, 0, 2 * Math.PI);
+          if (elem.bgColor !== 'transparent') {
+            ctx.fillStyle = elem.bgColor;
+            ctx.fill();
+          }
+          ctx.stroke();
+        }
       } else if (elem.type === 'arrow' && elem.x !== undefined && elem.y !== undefined && elem.width && elem.height) {
         const toX = elem.x + elem.width;
         const toY = elem.y + elem.height;
-        rc.line(elem.x, elem.y, toX, toY, roughOptions);
+        if (rc) {
+          rc.line(elem.x, elem.y, toX, toY, roughOptions);
+        } else {
+          ctx.strokeStyle = elem.strokeColor;
+          ctx.lineWidth = elem.strokeWidth;
+          ctx.beginPath();
+          ctx.moveTo(elem.x, elem.y);
+          ctx.lineTo(toX, toY);
+          ctx.stroke();
+        }
 
         const angle = Math.atan2(elem.height, elem.width);
         const headLen = Math.max(12, elem.strokeWidth * 3.5);
-        const p1: [number, number] = [toX - headLen * Math.cos(angle - Math.PI / 6), toY - headLen * Math.sin(angle - Math.PI / 6)];
-        const p2: [number, number] = [toX - headLen * Math.cos(angle + Math.PI / 6), toY - headLen * Math.sin(angle + Math.PI / 6)];
-        rc.polygon([[toX, toY], p1, p2], { ...roughOptions, fill: elem.strokeColor, fillStyle: 'solid' });
+        ctx.fillStyle = elem.strokeColor;
+        ctx.beginPath();
+        ctx.moveTo(toX, toY);
+        ctx.lineTo(toX - headLen * Math.cos(angle - Math.PI / 6), toY - headLen * Math.sin(angle - Math.PI / 6));
+        ctx.lineTo(toX - headLen * Math.cos(angle + Math.PI / 6), toY - headLen * Math.sin(angle + Math.PI / 6));
+        ctx.closePath();
+        ctx.fill();
       } else if (elem.type === 'line' && elem.x !== undefined && elem.y !== undefined && elem.width && elem.height) {
-        rc.line(elem.x, elem.y, elem.x + elem.width, elem.y + elem.height, roughOptions);
+        if (rc) {
+          rc.line(elem.x, elem.y, elem.x + elem.width, elem.y + elem.height, roughOptions);
+        } else {
+          ctx.strokeStyle = elem.strokeColor;
+          ctx.lineWidth = elem.strokeWidth;
+          ctx.beginPath();
+          ctx.moveTo(elem.x, elem.y);
+          ctx.lineTo(elem.x + elem.width, elem.y + elem.height);
+          ctx.stroke();
+        }
       } else if (elem.type === 'text' && elem.x !== undefined && elem.y !== undefined && elem.text) {
         ctx.fillStyle = elem.strokeColor;
         ctx.font = '600 16px "Comic Sans MS", "Virgil", Inter, sans-serif';
@@ -407,17 +487,29 @@ export default function WhiteboardCanvas({
         const h = lastPt.y - startPos.y;
 
         if (tool === 'rect') {
-          rc.rectangle(startPos.x, startPos.y, w, h, roughOptions);
+          if (rc) rc.rectangle(startPos.x, startPos.y, w, h, roughOptions);
+          else { ctx.strokeStyle = strokeColor; ctx.strokeRect(startPos.x, startPos.y, w, h); }
         } else if (tool === 'diamond') {
           const cx = startPos.x + w / 2;
           const cy = startPos.y + h / 2;
-          rc.polygon([[cx, startPos.y], [startPos.x + w, cy], [cx, startPos.y + h], [startPos.x, cy]], roughOptions);
+          if (rc) rc.polygon([[cx, startPos.y], [startPos.x + w, cy], [cx, startPos.y + h], [startPos.x, cy]], roughOptions);
+          else {
+            ctx.strokeStyle = strokeColor;
+            ctx.beginPath();
+            ctx.moveTo(cx, startPos.y); ctx.lineTo(startPos.x + w, cy); ctx.lineTo(cx, startPos.y + h); ctx.lineTo(startPos.x, cy); ctx.closePath();
+            ctx.stroke();
+          }
         } else if (tool === 'circle') {
-          rc.ellipse(startPos.x + w / 2, startPos.y + h / 2, Math.abs(w), Math.abs(h), roughOptions);
-        } else if (tool === 'arrow') {
-          rc.line(startPos.x, startPos.y, lastPt.x, lastPt.y, roughOptions);
-        } else if (tool === 'line') {
-          rc.line(startPos.x, startPos.y, lastPt.x, lastPt.y, roughOptions);
+          if (rc) rc.ellipse(startPos.x + w / 2, startPos.y + h / 2, Math.abs(w), Math.abs(h), roughOptions);
+          else {
+            ctx.strokeStyle = strokeColor;
+            ctx.beginPath(); ctx.ellipse(startPos.x + w / 2, startPos.y + h / 2, Math.abs(w) / 2, Math.abs(h) / 2, 0, 0, 2 * Math.PI); ctx.stroke();
+          }
+        } else if (tool === 'arrow' || tool === 'line') {
+          if (rc) rc.line(startPos.x, startPos.y, lastPt.x, lastPt.y, roughOptions);
+          else {
+            ctx.strokeStyle = strokeColor; ctx.beginPath(); ctx.moveTo(startPos.x, startPos.y); ctx.lineTo(lastPt.x, lastPt.y); ctx.stroke();
+          }
         }
       }
     }
@@ -440,19 +532,15 @@ export default function WhiteboardCanvas({
 
   // Mouse Interaction Handlers
   const handleMouseDown = (e: React.MouseEvent<HTMLCanvasElement>) => {
-    // Middle click or Pan tool activates canvas panning
     if (e.button === 1 || tool === 'pan' || (e as any).spaceKey) {
       setIsPanning(true);
-      setPanStart({ x: e.clientX - panOffset.x, y: e.clientY - panOffset.y });
+      setPanStart({ x: e.clientX - panOffset.x, y: e.clientY - panStart.y });
       return;
     }
 
     const { x, y } = getCanvasCoords(e.clientX, e.clientY);
 
-    // Text tool click creates inline editable text box
     if (tool === 'text') {
-      const screenX = e.clientX;
-      const screenY = e.clientY;
       setActiveTextInput({ x, y, text: '' });
       if (!isToolLocked) setTool('select');
       return;
@@ -568,21 +656,13 @@ export default function WhiteboardCanvas({
     link.click();
   };
 
-  // Dynamic Excalidraw Component rendering if loaded
   const ExcalidrawComp = ExcalidrawModule;
 
   return (
-    <CanvasErrorBoundary
-      fallback={
-        <div className="w-full h-full flex flex-col items-center justify-center bg-white text-neutral-800 p-6 text-center">
-          <PenTool className="w-8 h-8 text-amber-500 mb-2" />
-          <h3 className="font-bold text-sm">Whiteboard Canvas Ready</h3>
-        </div>
-      }
-    >
+    <CanvasErrorBoundary>
       <div className={`w-full h-full flex flex-col bg-[#f8f9fa] text-neutral-800 relative overflow-hidden select-none ${isFullScreen ? 'fixed inset-0 z-50' : ''}`}>
         
-        {/* Top Header & Document Pills */}
+        {/* Top Navigation & Document Pills Header */}
         <div className="h-10 px-3 bg-white/90 border-b border-border-color flex items-center justify-between shrink-0 text-xs z-30">
           <div className="flex items-center gap-2 overflow-x-auto py-1 max-w-[60%] no-scrollbar">
             
@@ -697,7 +777,7 @@ export default function WhiteboardCanvas({
           </div>
         </div>
 
-        {/* If Real Excalidraw component is available, render 100% Real Excalidraw Engine */}
+        {/* If Real Excalidraw Component loaded, render 100% Real Excalidraw */}
         {ExcalidrawComp && !excalidrawLoadFailed ? (
           <div className="flex-1 w-full h-full relative">
             <ExcalidrawComp
