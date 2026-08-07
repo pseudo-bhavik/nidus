@@ -1,8 +1,9 @@
 import React, { useState } from 'react';
-import { Plus, Trash2, Search, Check, FolderOpen, PanelLeftOpen, AlertCircle, RotateCcw } from 'lucide-react';
+import { Plus, Trash2, Search, Check, FolderOpen, PanelLeftOpen, AlertCircle, RotateCcw, X } from 'lucide-react';
 import { Bookmark, ViewType } from '../lib/types';
 import BadgeDropdown from './BadgeDropdown';
 import Spinner from './Spinner';
+import QuickStickyNotesWidget from './QuickStickyNotesWidget';
 
 interface CentralMonitorProps {
   bookmarks: Bookmark[]; // All bookmarks (to calculate metrics globally or filtered)
@@ -160,7 +161,7 @@ export default function CentralMonitor({
           </form>
         </div>
 
-        {/* Global Instant Search (Padding adjustments to fix overlapping) */}
+        {/* Global Instant Search */}
         <div className="flex items-center gap-2 max-w-xs flex-1 relative">
           <Search className="w-4 h-4 text-neutral-400 absolute left-3.5 pointer-events-none shrink-0" />
           <input
@@ -168,9 +169,19 @@ export default function CentralMonitor({
             value={searchQuery}
             onChange={(e) => onSearchQueryChange(e.target.value)}
             placeholder="Instant search by title, URL..."
-            className="w-full pl-10 pr-3.5 py-2 border border-neutral-200 hover:border-neutral-300 focus:border-hn-orange/50 focus:ring-1 focus:ring-hn-orange/10 rounded-md text-xs outline-none bg-neutral-50/20 font-semibold transition-all-custom"
+            className="w-full pl-10 pr-8 py-2 border border-neutral-200 hover:border-neutral-300 focus:border-hn-orange/50 focus:ring-1 focus:ring-hn-orange/10 rounded-md text-xs outline-none bg-neutral-50/20 font-semibold transition-all-custom"
             style={{ paddingLeft: '2.5rem' }}
           />
+          {searchQuery && (
+            <button
+              type="button"
+              onClick={() => onSearchQueryChange('')}
+              className="absolute right-2.5 p-1 hover:bg-neutral-200/70 rounded-full text-neutral-400 hover:text-neutral-700 cursor-pointer transition-all-custom"
+              title="Clear Search"
+            >
+              <X className="w-3.5 h-3.5" />
+            </button>
+          )}
         </div>
       </div>
 
@@ -494,6 +505,9 @@ export default function CentralMonitor({
           </div>
         </div>
       )}
+
+      {/* Pinned Quick Sticky Notes Floating Widget on Home Screen */}
+      <QuickStickyNotesWidget />
     </div>
   );
 }
