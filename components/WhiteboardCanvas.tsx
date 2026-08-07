@@ -59,8 +59,11 @@ const getElementBounds = (elem: CanvasElement) => {
     return { minX: minX - pad, minY: minY - pad, maxX: maxX + pad, maxY: maxY + pad, width: Math.max(10, maxX - minX + pad * 2), height: Math.max(10, maxY - minY + pad * 2) };
   }
   if (elem.type === 'text' && elem.x != null && elem.y != null) {
-    const textLen = (elem.text || '').length * 10;
-    return { minX: elem.x, minY: elem.y, maxX: elem.x + Math.max(40, textLen), maxY: elem.y + 26, width: Math.max(40, textLen), height: 26 };
+    const lines = (elem.text || '').split('\n');
+    const maxLineLen = Math.max(...lines.map((l) => l.length), 5);
+    const textW = Math.max(40, maxLineLen * 10);
+    const textH = Math.max(24, lines.length * 20);
+    return { minX: elem.x, minY: elem.y, maxX: elem.x + textW, maxY: elem.y + textH, width: textW, height: textH };
   }
   if (elem.x != null && elem.y != null && elem.width != null && elem.height != null) {
     const x1 = Math.min(elem.x, elem.x + elem.width);
@@ -174,13 +177,12 @@ export default function WhiteboardCanvas({
     }
   }, []);
 
-  // Native Non-Passive Wheel Event Listener (FIXES PAGE ZOOMING 100%)
+  // Native Non-Passive Wheel Event Listener (PREVENTS BROWSER PAGE ZOOM 100%)
   useEffect(() => {
     const container = containerRef.current;
     if (!container) return;
 
     const handleNativeWheel = (e: WheelEvent) => {
-      // Prevent native browser page zoom completely on Ctrl+Wheel or Pinch
       if (e.ctrlKey || e.metaKey) {
         e.preventDefault();
         const zoomDelta = e.deltaY < 0 ? 0.1 : -0.1;
@@ -231,12 +233,25 @@ export default function WhiteboardCanvas({
     }
   }, [activeDocId]);
 
-  // 3. Global Keyboard Shortcuts
+  // 3. Global Keyboard Shortcuts (Number Keys 1-0 Tool Switching + Shortcuts)
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if ((e.target as HTMLElement)?.closest('input,textarea')) return;
 
-      if (e.code === 'Space' && !spaceHeld) {
+      // NUMBER KEYS 1-0 TOOL SHORTCUTS MATCHING EXCALIDRAW
+      if (e.key === '1') setTool('select');
+      else if (e.key === '2') setTool('pan');
+      else if (e.key === '3') setTool('rect');
+      else if (e.key === '4') setTool('diamond');
+      else if (e.key === '5') setTool('circle');
+      else if (e.key === '6') setTool('arrow');
+      else if (e.key === '7') setTool('line');
+      else if (e.key === '8') setTool('pencil');
+      else if (e.key === '9') setTool('text');
+      else if (e.key === '0') setTool('eraser');
+
+      // Actions Shortcuts
+      else if (e.code === 'Space' && !spaceHeld) {
         e.preventDefault();
         setSpaceHeld(true);
       } else if (e.key === 'Delete' || e.key === 'Backspace') {
@@ -554,10 +569,17 @@ export default function WhiteboardCanvas({
           ctx.fill();
         }
       } else if (elem.type === 'text' && elem.x != null && elem.y != null && elem.text) {
-        ctx.fillStyle = elem.strokeColor;
-        ctx.font = '600 16px "Segoe UI", Inter, sans-serif';
+        ctx.save();
+        ctx.fillStyle = elem.strokeColor && elem.strokeColor !== 'transparent' ? elem.strokeColor : (canvasTheme === 'dark' ? '#ffffff' : '#1e1e1e');
+        const fontSize = Math.max(14, 16 * (elem.strokeWidth || 1));
+        ctx.font = `600 ${fontSize}px "Segoe UI", Inter, sans-serif`;
         ctx.textBaseline = 'top';
-        ctx.fillText(elem.text, elem.x, elem.y);
+
+        const lines = elem.text.split('\n');
+        lines.forEach((line, idx) => {
+          ctx.fillText(line, elem.x!, elem.y! + idx * (fontSize * 1.25));
+        });
+        ctx.restore();
       }
 
       ctx.globalAlpha = 1;
@@ -906,7 +928,6 @@ export default function WhiteboardCanvas({
     if (!isDrawingRef.current) return;
     const pts = currentPathRef.current;
 
-    // Distance filter for liquid-smooth strokes (>2.5px)
     if (pts.length > 0) {
       const lastPt = pts[pts.length - 1];
       const dist = Math.hypot(x - lastPt.x, y - lastPt.y);
@@ -1025,17 +1046,17 @@ export default function WhiteboardCanvas({
     }
   };
 
-  const handleTextSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (activeTextInput?.text.trim()) {
+  const handleTextSubmit = (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
+    if (activeTextInput && activeTextInput.text.trim()) {
       const newElem: CanvasElement = {
-        id: 'e-' + Date.now(),
+        id: 'e-' + Date.now() + Math.random().toString(36).substr(2, 4),
         type: 'text',
         x: activeTextInput.x,
         y: activeTextInput.y,
         text: activeTextInput.text.trim(),
-        strokeColor,
-        bgColor,
+        strokeColor: strokeColor === 'transparent' || !strokeColor ? '#1e1e1e' : strokeColor,
+        bgColor: 'transparent',
         strokeWidth,
         strokeStyle,
         opacity,
@@ -1062,17 +1083,17 @@ export default function WhiteboardCanvas({
 
   const cursorStyle = tool === 'pan' || spaceHeld || isPanning ? 'grab' : tool === 'select' ? 'default' : 'crosshair';
 
-  const TOOLS: { id: ToolType; label: string; icon: any }[] = [
-    { id: 'select', label: 'Selection / Move (Box / Drag)', icon: MousePointer },
-    { id: 'pan', label: 'Hand (Pan)', icon: Hand },
-    { id: 'rect', label: 'Rectangle', icon: Square },
-    { id: 'diamond', label: 'Diamond', icon: Sparkles },
-    { id: 'circle', label: 'Ellipse', icon: Circle },
-    { id: 'arrow', label: 'Arrow', icon: ArrowRight },
-    { id: 'line', label: 'Line', icon: Minus },
-    { id: 'pencil', label: 'Draw / Scribble', icon: PenTool },
-    { id: 'text', label: 'Text Box (Click to type)', icon: Type },
-    { id: 'eraser', label: 'Eraser', icon: Eraser },
+  const TOOLS: { id: ToolType; label: string; keyNum: string; icon: any }[] = [
+    { id: 'select', label: 'Selection / Move', keyNum: '1', icon: MousePointer },
+    { id: 'pan', label: 'Hand (Pan)', keyNum: '2', icon: Hand },
+    { id: 'rect', label: 'Rectangle', keyNum: '3', icon: Square },
+    { id: 'diamond', label: 'Diamond', keyNum: '4', icon: Sparkles },
+    { id: 'circle', label: 'Ellipse', keyNum: '5', icon: Circle },
+    { id: 'arrow', label: 'Arrow', keyNum: '6', icon: ArrowRight },
+    { id: 'line', label: 'Line', keyNum: '7', icon: Minus },
+    { id: 'pencil', label: 'Draw', keyNum: '8', icon: PenTool },
+    { id: 'text', label: 'Text Box', keyNum: '9', icon: Type },
+    { id: 'eraser', label: 'Eraser', keyNum: '0', icon: Eraser },
   ];
 
   // Calculate screen position for floating selection dock above selected elements
@@ -1292,7 +1313,7 @@ export default function WhiteboardCanvas({
         {/* Dual Canvas Display Container */}
         <div ref={containerRef} className="flex-1 relative overflow-hidden">
           
-          {/* Top Excalidraw Floating Toolbar */}
+          {/* Top Excalidraw Floating Toolbar with Number Keys (1-0) */}
           <div className="absolute top-3 left-1/2 -translate-x-1/2 z-30 bg-white/95 backdrop-blur-md border border-neutral-250 shadow-md rounded-2xl px-2 py-1.5 flex items-center gap-1">
             {TOOLS.map((t) => {
               const Icon = t.icon;
@@ -1300,21 +1321,25 @@ export default function WhiteboardCanvas({
                 <button
                   key={t.id}
                   onClick={() => setTool(t.id)}
-                  className={`p-2 rounded-xl transition-all cursor-pointer ${
+                  className={`p-2 rounded-xl transition-all cursor-pointer relative flex items-center justify-center ${
                     tool === t.id ? 'bg-indigo-600 text-white shadow-2xs font-bold' : 'text-neutral-700 hover:bg-neutral-100'
                   }`}
-                  title={t.label}
+                  title={`${t.label} (Press ${t.keyNum})`}
                 >
                   <Icon className="w-4 h-4" />
+                  <span className="absolute bottom-0.5 right-1 text-[9px] font-extrabold opacity-75 leading-none">{t.keyNum}</span>
                 </button>
               );
             })}
           </div>
 
-          {/* Text Tool Active Input Overlay */}
+          {/* Text Tool Active Input Overlay (Multi-line Textarea) */}
           {activeTextInput && (
             <form
-              onSubmit={handleTextSubmit}
+              onSubmit={(e) => {
+                e.preventDefault();
+                handleTextSubmit();
+              }}
               style={{
                 position: 'absolute',
                 top: activeTextInput.y * zoom + panOffset.y,
@@ -1322,14 +1347,20 @@ export default function WhiteboardCanvas({
                 zIndex: 50,
               }}
             >
-              <input
-                type="text"
+              <textarea
                 value={activeTextInput.text}
                 onChange={(e) => setActiveTextInput({ ...activeTextInput, text: e.target.value })}
-                onBlur={handleTextSubmit}
-                placeholder="Type note & press Enter…"
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' && !e.shiftKey) {
+                    e.preventDefault();
+                    handleTextSubmit();
+                  }
+                }}
+                onBlur={() => handleTextSubmit()}
+                placeholder="Type note & press Enter (Shift+Enter for new line)..."
                 autoFocus
-                className="px-2.5 py-1 bg-white border-2 border-indigo-500 rounded-lg shadow-lg text-xs font-semibold outline-none text-neutral-900 min-w-[180px]"
+                rows={Math.max(1, activeTextInput.text.split('\n').length)}
+                className="px-2.5 py-1.5 bg-white/95 border-2 border-indigo-500 rounded-lg shadow-xl text-sm font-semibold outline-none text-neutral-900 min-w-[180px] resize-none leading-snug"
               />
             </form>
           )}
@@ -1389,7 +1420,7 @@ export default function WhiteboardCanvas({
               onClick={handleUndo}
               disabled={historyStep <= 0}
               className="p-1.5 text-neutral-700 hover:bg-neutral-100 disabled:opacity-30 rounded-lg cursor-pointer"
-              title="Undo"
+              title="Undo (Ctrl+Z)"
             >
               <Undo className="w-3.5 h-3.5" />
             </button>
@@ -1398,7 +1429,7 @@ export default function WhiteboardCanvas({
               onClick={handleRedo}
               disabled={historyStep >= history.length - 1}
               className="p-1.5 text-neutral-700 hover:bg-neutral-100 disabled:opacity-30 rounded-lg cursor-pointer"
-              title="Redo"
+              title="Redo (Ctrl+Shift+Z)"
             >
               <Redo className="w-3.5 h-3.5" />
             </button>
