@@ -1,13 +1,24 @@
 'use client';
 
 import React, { useState, useEffect, useMemo } from 'react';
+import dynamic from 'next/dynamic';
 import { supabase } from '../lib/supabase';
 import { Bookmark, ViewType } from '../lib/types';
 import LeftSidebar from '../components/LeftSidebar';
 import CentralMonitor from '../components/CentralMonitor';
 import InspectorPanel from '../components/InspectorPanel';
 import StickyNotesView from '../components/StickyNotesView';
-import WhiteboardCanvas from '../components/WhiteboardCanvas';
+const WhiteboardCanvas = dynamic(() => import('../components/WhiteboardCanvas'), {
+  ssr: false,
+  loading: () => (
+    <div className="flex-1 flex items-center justify-center bg-white">
+      <div className="flex flex-col items-center gap-3">
+        <div className="w-8 h-8 border-2 border-indigo-600 border-t-transparent rounded-full animate-spin" />
+        <span className="text-sm text-neutral-500 font-medium">Loading Canvas…</span>
+      </div>
+    </div>
+  ),
+});
 import CommandPalette from '../components/CommandPalette';
 import ImportExportModal from '../components/ImportExportModal';
 import AuthModal from '../components/AuthModal';
