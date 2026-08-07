@@ -5,7 +5,7 @@ import {
   PenTool, Plus, Trash2, Edit2, Download, Moon, Sun, 
   Maximize2, Minimize2, Check, PanelLeftOpen, Hand, MousePointer, 
   Minus, Lock, Unlock, Square, Circle, ArrowRight, Type, Eraser, 
-  Undo, Redo, Sparkles
+  Undo, Redo, Sparkles, Copy, Layers, Move
 } from 'lucide-react';
 import { WhiteboardCanvasDoc } from '../lib/types';
 
@@ -15,7 +15,7 @@ interface WhiteboardCanvasProps {
   onOpenSidebar?: () => void;
 }
 
-// Stroke & Fill Color Palettes matching Excalidraw + Nidus UI
+// Color Palettes matching Excalidraw UI
 const STROKE_COLORS = ['#1e1e1e', '#e03131', '#2f9e44', '#1971c2', '#f08c00', '#6741d9'];
 const BG_COLORS = ['transparent', '#ffc9c9', '#b2f2bb', '#a5d8ff', '#ffec99', '#eebefa'];
 
@@ -43,6 +43,44 @@ const DEFAULT_DOC: WhiteboardCanvasDoc = {
   updated_at: new Date().toISOString(),
 };
 
+// Helper: Calculate bounding box of any element
+const getElementBounds = (elem: CanvasElement) => {
+  if ((elem.type === 'pencil' || elem.type === 'eraser') && elem.points && elem.points.length > 0) {
+    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+    elem.points.forEach((pt) => {
+      if (pt.x < minX) minX = pt.x;
+      if (pt.y < minY) minY = pt.y;
+      if (pt.x > maxX) maxX = pt.x;
+      if (pt.y > maxY) maxY = pt.y;
+    });
+    const pad = elem.strokeWidth * 2;
+    return { minX: minX - pad, minY: minY - pad, maxX: maxX + pad, maxY: maxY + pad, width: maxX - minX + pad * 2, height: maxY - minY + pad * 2 };
+  }
+  if (elem.type === 'text' && elem.x != null && elem.y != null) {
+    const textLen = (elem.text || '').length * 9;
+    return { minX: elem.x, minY: elem.y, maxX: elem.x + Math.max(40, textLen), maxY: elem.y + 24, width: Math.max(40, textLen), height: 24 };
+  }
+  if (elem.x != null && elem.y != null && elem.width != null && elem.height != null) {
+    const x1 = Math.min(elem.x, elem.x + elem.width);
+    const x2 = Math.max(elem.x, elem.x + elem.width);
+    const y1 = Math.min(elem.y, elem.y + elem.height);
+    const y2 = Math.max(elem.y, elem.y + elem.height);
+    return { minX: x1, minY: y1, maxX: x2, maxY: y2, width: x2 - x1, height: y2 - y1 };
+  }
+  return { minX: 0, minY: 0, maxX: 0, maxY: 0, width: 0, height: 0 };
+};
+
+// Helper: Check if point (px, py) is inside element bounds
+const isPointInElement = (px: number, py: number, elem: CanvasElement) => {
+  const b = getElementBounds(elem);
+  return px >= b.minX && px <= b.maxX && py >= b.minY && py <= b.maxY;
+};
+
+// Helper: Check if two bounding boxes overlap
+const isBoundsOverlapping = (b1: ReturnType<typeof getElementBounds>, b2: { minX: number; minY: number; maxX: number; maxY: number }) => {
+  return !(b1.maxX < b2.minX || b1.minX > b2.maxX || b1.maxY < b2.minY || b1.minY > b2.maxY);
+};
+
 export default function WhiteboardCanvas({ 
   activeTheme = 'orange', 
   isSidebarOpen = true, 
@@ -57,8 +95,8 @@ export default function WhiteboardCanvas({
   const [isFullScreen, setIsFullScreen] = useState(false);
 
   // Active Tool & Style Inspector Properties
+  // NOTE: Tool stays sticky by default (does not auto-reset to select after drawing)
   const [tool, setTool] = useState<ToolType>('pencil');
-  const [isToolLocked, setIsToolLocked] = useState(false);
   const [strokeColor, setStrokeColor] = useState('#1e1e1e');
   const [bgColor, setBgColor] = useState('transparent');
   const [strokeWidth, setStrokeWidth] = useState(2);
@@ -75,7 +113,10 @@ export default function WhiteboardCanvas({
   const [history, setHistory] = useState<CanvasElement[][]>([[]]);
   const [historyStep, setHistoryStep] = useState(0);
 
-  // Text Tool Overlay
+  // Selection & Lasso Drag State
+  const [selectedIds, setSelectedIds] = useState<string[]>([]);
+
+  // Text Tool Overlay State
   const [activeTextInput, setActiveTextInput] = useState<{ x: number; y: number; text: string } | null>(null);
   const [spaceHeld, setSpaceHeld] = useState(false);
 
@@ -84,13 +125,36 @@ export default function WhiteboardCanvas({
   const fgCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const containerRef = useRef<HTMLDivElement | null>(null);
 
-  // Interactive Live Drawing Mutable Refs (Zero React State Overheads during Mouse Move!)
+  // Interactive Live Action Mutable Refs (Zero React State Overheads during Mouse Move!)
   const isDrawingRef = useRef(false);
+  const isDraggingSelectedRef = useRef(false);
+  const isBoxSelectingRef = useRef(false);
   const startPosRef = useRef<{ x: number; y: number } | null>(null);
   const currentPathRef = useRef<{ x: number; y: number }[]>([]);
+  const dragStartWorldRef = useRef<{ x: number; y: number }>({ x: 0, y: 0 });
+  const dragElementsStartRef = useRef<CanvasElement[]>([]);
   const panStartRef = useRef({ x: 0, y: 0 });
   const panOffsetStartRef = useRef({ x: 0, y: 0 });
   const animFrameRef = useRef<number>(0);
+
+  // Synchronize Canvas Dimensions to Container Bounding Box
+  const syncCanvasDimensions = useCallback(() => {
+    const container = containerRef.current;
+    if (!container) return;
+    const rect = container.getBoundingClientRect();
+    const w = Math.floor(rect.width);
+    const h = Math.floor(rect.height);
+    if (w > 0 && h > 0) {
+      if (bgCanvasRef.current && (bgCanvasRef.current.width !== w || bgCanvasRef.current.height !== h)) {
+        bgCanvasRef.current.width = w;
+        bgCanvasRef.current.height = h;
+      }
+      if (fgCanvasRef.current && (fgCanvasRef.current.width !== w || fgCanvasRef.current.height !== h)) {
+        fgCanvasRef.current.width = w;
+        fgCanvasRef.current.height = h;
+      }
+    }
+  }, []);
 
   // 1. Load saved canvas tabs from localStorage
   useEffect(() => {
@@ -120,32 +184,46 @@ export default function WhiteboardCanvas({
       setElements(loaded);
       setHistory([loaded]);
       setHistoryStep(0);
+      setSelectedIds([]);
     }
   }, [activeDocId]);
 
-  // 3. Spacebar Pan Shortcut Listener
+  // 3. Global Keyboard Shortcuts (Delete selected elements, Spacebar pan, Undo/Redo)
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.code === 'Space' && !spaceHeld && !(e.target as HTMLElement)?.closest('input,textarea')) {
+      if ((e.target as HTMLElement)?.closest('input,textarea')) return;
+
+      if (e.code === 'Space' && !spaceHeld) {
         e.preventDefault();
         setSpaceHeld(true);
+      } else if (e.key === 'Delete' || e.key === 'Backspace') {
+        if (selectedIds.length > 0) {
+          e.preventDefault();
+          handleDeleteSelected();
+        }
+      } else if ((e.ctrlKey || e.metaKey) && e.key === 'z') {
+        e.preventDefault();
+        if (e.shiftKey) handleRedo();
+        else handleUndo();
       }
     };
+
     const handleKeyUp = (e: KeyboardEvent) => {
       if (e.code === 'Space') {
         setSpaceHeld(false);
         setIsPanning(false);
       }
     };
+
     window.addEventListener('keydown', handleKeyDown);
     window.addEventListener('keyup', handleKeyUp);
     return () => {
       window.removeEventListener('keydown', handleKeyDown);
       window.removeEventListener('keyup', handleKeyUp);
     };
-  }, [spaceHeld]);
+  }, [spaceHeld, selectedIds, elements]);
 
-  // Document LocalStorage persistence helpers
+  // LocalStorage persistence helpers
   const saveDocsToStorage = (updatedDocs: WhiteboardCanvasDoc[]) => {
     setDocs(updatedDocs);
     try {
@@ -231,8 +309,48 @@ export default function WhiteboardCanvas({
     }
   };
 
-  // Convert Screen Mouse Coordinates to World Infinite Canvas Coordinates
+  // Delete Selected Elements
+  const handleDeleteSelected = () => {
+    if (selectedIds.length === 0) return;
+    const updated = elements.filter((e) => !selectedIds.includes(e.id));
+    pushHistory(updated);
+    setSelectedIds([]);
+  };
+
+  // Duplicate Selected Elements
+  const handleDuplicateSelected = () => {
+    if (selectedIds.length === 0) return;
+    const duplicated: CanvasElement[] = [];
+    const newSelectedIds: string[] = [];
+
+    elements.forEach((elem) => {
+      if (selectedIds.includes(elem.id)) {
+        const newId = 'e-' + Date.now() + Math.random().toString(36).substr(2, 4);
+        newSelectedIds.push(newId);
+        if (elem.points) {
+          duplicated.push({
+            ...elem,
+            id: newId,
+            points: elem.points.map((pt) => ({ x: pt.x + 20, y: pt.y + 20 })),
+          });
+        } else {
+          duplicated.push({
+            ...elem,
+            id: newId,
+            x: (elem.x ?? 0) + 20,
+            y: (elem.y ?? 0) + 20,
+          });
+        }
+      }
+    });
+
+    pushHistory([...elements, ...duplicated]);
+    setSelectedIds(newSelectedIds);
+  };
+
+  // Convert Screen Mouse Coordinates to World Infinite Canvas Coordinates (PRECISE NO-OFFSET MATH)
   const getCanvasCoords = useCallback((clientX: number, clientY: number) => {
+    syncCanvasDimensions();
     const canvas = fgCanvasRef.current || bgCanvasRef.current;
     if (!canvas) return { x: 0, y: 0 };
     const rect = canvas.getBoundingClientRect();
@@ -240,9 +358,9 @@ export default function WhiteboardCanvas({
       x: (clientX - rect.left - panOffset.x) / zoom,
       y: (clientY - rect.top - panOffset.y) / zoom,
     };
-  }, [panOffset, zoom]);
+  }, [panOffset, zoom, syncCanvasDimensions]);
 
-  // ---------- DRAWING HELPER: Smooth Vector Curve Interpolation ----------
+  // Smooth Vector Curve Interpolation
   const drawSmoothPath = (ctx: CanvasRenderingContext2D, points: { x: number; y: number }[]) => {
     if (!points || points.length === 0) return;
     if (points.length === 1) {
@@ -268,26 +386,12 @@ export default function WhiteboardCanvas({
   };
 
   // ---------- LAYER 1: STATIC BACKGROUND CANVAS RENDERER ----------
-  // Redrawn ONLY when elements, pan/zoom, theme, or window size changes.
   const renderBackgroundLayer = useCallback(() => {
+    syncCanvasDimensions();
     const canvas = bgCanvasRef.current;
     if (!canvas) return;
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
-
-    const container = containerRef.current;
-    if (container) {
-      const w = Math.floor(container.clientWidth);
-      const h = Math.floor(container.clientHeight);
-      if (w > 0 && h > 0 && (canvas.width !== w || canvas.height !== h)) {
-        canvas.width = w;
-        canvas.height = h;
-        if (fgCanvasRef.current) {
-          fgCanvasRef.current.width = w;
-          fgCanvasRef.current.height = h;
-        }
-      }
-    }
 
     // Clear background
     ctx.fillStyle = canvasTheme === 'dark' ? '#121212' : '#ffffff';
@@ -298,7 +402,7 @@ export default function WhiteboardCanvas({
     const safeZoom = Math.max(0.1, zoom);
     ctx.scale(safeZoom, safeZoom);
 
-    // Excalidraw Dots Grid (Bounded to viewport)
+    // Excalidraw Dots Grid
     ctx.fillStyle = canvasTheme === 'dark' ? '#2e2e2e' : '#e2e8f0';
     const grid = 24;
     const visW = canvas.width / safeZoom;
@@ -318,6 +422,7 @@ export default function WhiteboardCanvas({
 
     // Render Saved Elements
     elements.forEach((elem) => {
+      const isSelected = selectedIds.includes(elem.id);
       ctx.globalAlpha = (elem.opacity ?? 100) / 100;
       ctx.strokeStyle = elem.strokeColor;
       ctx.lineWidth = elem.strokeWidth;
@@ -386,121 +491,157 @@ export default function WhiteboardCanvas({
       } else if (elem.type === 'text' && elem.x != null && elem.y != null && elem.text) {
         ctx.fillStyle = elem.strokeColor;
         ctx.font = '600 16px "Segoe UI", Inter, sans-serif';
+        ctx.textBaseline = 'top';
         ctx.fillText(elem.text, elem.x, elem.y);
       }
+
+      // Draw Selection Bounding Box Highlight on Selected Elements
+      if (isSelected) {
+        const b = getElementBounds(elem);
+        ctx.setLineDash([4, 4]);
+        ctx.strokeStyle = '#4f46e5';
+        ctx.lineWidth = 1.5 / safeZoom;
+        ctx.strokeRect(b.minX - 4, b.minY - 4, b.width + 8, b.height + 8);
+
+        // Corner Resize Handles
+        ctx.fillStyle = '#ffffff';
+        ctx.strokeStyle = '#4f46e5';
+        ctx.setLineDash([]);
+        const hs = 6 / safeZoom;
+        [
+          { x: b.minX - 4, y: b.minY - 4 },
+          { x: b.maxX + 4, y: b.minY - 4 },
+          { x: b.minX - 4, y: b.maxY + 4 },
+          { x: b.maxX + 4, y: b.maxY + 4 },
+        ].forEach((h) => {
+          ctx.fillRect(h.x - hs / 2, h.y - hs / 2, hs, hs);
+          ctx.strokeRect(h.x - hs / 2, h.y - hs / 2, hs, hs);
+        });
+      }
+
       ctx.globalAlpha = 1;
     });
 
     ctx.restore();
-  }, [elements, canvasTheme, panOffset, zoom]);
+  }, [elements, canvasTheme, panOffset, zoom, selectedIds, syncCanvasDimensions]);
 
-  // Trigger Background Render when elements/pan/zoom change
+  // Trigger Background Render when elements/pan/zoom/selection changes
   useEffect(() => {
     renderBackgroundLayer();
   }, [renderBackgroundLayer]);
 
-  // Window Resize Listener
-  useEffect(() => {
-    const handleResize = () => renderBackgroundLayer();
-    window.addEventListener('resize', handleResize);
-    return () => window.removeEventListener('resize', handleResize);
-  }, [renderBackgroundLayer]);
-
   // ---------- LAYER 2: INTERACTIVE FOREGROUND CANVAS RENDERER ----------
-  // Renders ONLY the active live stroke during mouse drag (<0.05ms frame execution!).
   const renderForegroundLayer = useCallback(() => {
+    syncCanvasDimensions();
     const canvas = fgCanvasRef.current;
     if (!canvas) return;
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
 
-    // Fast clear foreground canvas
     ctx.clearRect(0, 0, canvas.width, canvas.height);
-
-    if (!isDrawingRef.current || currentPathRef.current.length === 0 || !startPosRef.current) return;
 
     ctx.save();
     ctx.translate(panOffset.x, panOffset.y);
     const safeZoom = Math.max(0.1, zoom);
     ctx.scale(safeZoom, safeZoom);
 
-    ctx.globalAlpha = opacity / 100;
-    ctx.strokeStyle = strokeColor;
-    ctx.lineWidth = strokeWidth;
-    ctx.lineCap = 'round';
-    ctx.lineJoin = 'round';
+    // 1. Render Active Live Drawing Stroke
+    if (isDrawingRef.current && currentPathRef.current.length > 0 && startPosRef.current) {
+      ctx.globalAlpha = opacity / 100;
+      ctx.strokeStyle = strokeColor;
+      ctx.lineWidth = strokeWidth;
+      ctx.lineCap = 'round';
+      ctx.lineJoin = 'round';
 
-    if (strokeStyle === 'dashed') ctx.setLineDash([8, 8]);
-    else if (strokeStyle === 'dotted') ctx.setLineDash([3, 3]);
-    else ctx.setLineDash([]);
+      if (strokeStyle === 'dashed') ctx.setLineDash([8, 8]);
+      else if (strokeStyle === 'dotted') ctx.setLineDash([3, 3]);
+      else ctx.setLineDash([]);
 
-    const pts = currentPathRef.current;
-    const start = startPosRef.current;
-    const last = pts[pts.length - 1];
+      const pts = currentPathRef.current;
+      const start = startPosRef.current;
+      const last = pts[pts.length - 1];
 
-    if (tool === 'pencil' || tool === 'eraser') {
-      if (tool === 'eraser') {
-        ctx.strokeStyle = canvasTheme === 'dark' ? '#121212' : '#ffffff';
-        ctx.lineWidth = strokeWidth * 4;
-      }
-      drawSmoothPath(ctx, pts);
-    } else {
-      const w = last.x - start.x;
-      const h = last.y - start.y;
-      if (tool === 'rect') {
-        if (bgColor !== 'transparent') {
-          ctx.fillStyle = bgColor;
-          ctx.fillRect(start.x, start.y, w, h);
+      if (tool === 'pencil' || tool === 'eraser') {
+        if (tool === 'eraser') {
+          ctx.strokeStyle = canvasTheme === 'dark' ? '#121212' : '#ffffff';
+          ctx.lineWidth = strokeWidth * 4;
         }
-        ctx.strokeRect(start.x, start.y, w, h);
-      } else if (tool === 'diamond') {
-        const cx = start.x + w / 2;
-        const cy = start.y + h / 2;
-        ctx.beginPath();
-        ctx.moveTo(cx, start.y);
-        ctx.lineTo(start.x + w, cy);
-        ctx.lineTo(cx, start.y + h);
-        ctx.lineTo(start.x, cy);
-        ctx.closePath();
-        if (bgColor !== 'transparent') {
-          ctx.fillStyle = bgColor;
-          ctx.fill();
-        }
-        ctx.stroke();
-      } else if (tool === 'circle') {
-        const cx = start.x + w / 2;
-        const cy = start.y + h / 2;
-        ctx.beginPath();
-        ctx.ellipse(cx, cy, Math.abs(w / 2), Math.abs(h / 2), 0, 0, Math.PI * 2);
-        if (bgColor !== 'transparent') {
-          ctx.fillStyle = bgColor;
-          ctx.fill();
-        }
-        ctx.stroke();
-      } else if (tool === 'arrow' || tool === 'line') {
-        ctx.beginPath();
-        ctx.moveTo(start.x, start.y);
-        ctx.lineTo(last.x, last.y);
-        ctx.stroke();
-
-        if (tool === 'arrow') {
-          const angle = Math.atan2(h, w);
-          const hl = Math.max(12, strokeWidth * 3);
-          ctx.fillStyle = strokeColor;
+        drawSmoothPath(ctx, pts);
+      } else {
+        const w = last.x - start.x;
+        const h = last.y - start.y;
+        if (tool === 'rect') {
+          if (bgColor !== 'transparent') {
+            ctx.fillStyle = bgColor;
+            ctx.fillRect(start.x, start.y, w, h);
+          }
+          ctx.strokeRect(start.x, start.y, w, h);
+        } else if (tool === 'diamond') {
+          const cx = start.x + w / 2;
+          const cy = start.y + h / 2;
           ctx.beginPath();
-          ctx.moveTo(last.x, last.y);
-          ctx.lineTo(last.x - hl * Math.cos(angle - Math.PI / 6), last.y - hl * Math.sin(angle - Math.PI / 6));
-          ctx.lineTo(last.x - hl * Math.cos(angle + Math.PI / 6), last.y - hl * Math.sin(angle + Math.PI / 6));
+          ctx.moveTo(cx, start.y);
+          ctx.lineTo(start.x + w, cy);
+          ctx.lineTo(cx, start.y + h);
+          ctx.lineTo(start.x, cy);
           ctx.closePath();
-          ctx.fill();
+          if (bgColor !== 'transparent') {
+            ctx.fillStyle = bgColor;
+            ctx.fill();
+          }
+          ctx.stroke();
+        } else if (tool === 'circle') {
+          const cx = start.x + w / 2;
+          const cy = start.y + h / 2;
+          ctx.beginPath();
+          ctx.ellipse(cx, cy, Math.abs(w / 2), Math.abs(h / 2), 0, 0, Math.PI * 2);
+          if (bgColor !== 'transparent') {
+            ctx.fillStyle = bgColor;
+            ctx.fill();
+          }
+          ctx.stroke();
+        } else if (tool === 'arrow' || tool === 'line') {
+          ctx.beginPath();
+          ctx.moveTo(start.x, start.y);
+          ctx.lineTo(last.x, last.y);
+          ctx.stroke();
+
+          if (tool === 'arrow') {
+            const angle = Math.atan2(h, w);
+            const hl = Math.max(12, strokeWidth * 3);
+            ctx.fillStyle = strokeColor;
+            ctx.beginPath();
+            ctx.moveTo(last.x, last.y);
+            ctx.lineTo(last.x - hl * Math.cos(angle - Math.PI / 6), last.y - hl * Math.sin(angle - Math.PI / 6));
+            ctx.lineTo(last.x - hl * Math.cos(angle + Math.PI / 6), last.y - hl * Math.sin(angle + Math.PI / 6));
+            ctx.closePath();
+            ctx.fill();
+          }
         }
       }
     }
+
+    // 2. Render Box Selection Lasso Overlay
+    if (isBoxSelectingRef.current && startPosRef.current && currentPathRef.current.length > 0) {
+      const start = startPosRef.current;
+      const last = currentPathRef.current[currentPathRef.current.length - 1];
+      const bx = Math.min(start.x, last.x);
+      const by = Math.min(start.y, last.y);
+      const bw = Math.abs(last.x - start.x);
+      const bh = Math.abs(last.y - start.y);
+
+      ctx.fillStyle = 'rgba(79, 70, 229, 0.08)';
+      ctx.strokeStyle = '#4f46e5';
+      ctx.lineWidth = 1 / safeZoom;
+      ctx.setLineDash([4, 4]);
+      ctx.fillRect(bx, by, bw, bh);
+      ctx.strokeRect(bx, by, bw, bh);
+    }
+
     ctx.globalAlpha = 1;
     ctx.restore();
-  }, [canvasTheme, opacity, panOffset, strokeColor, strokeStyle, strokeWidth, tool, zoom, bgColor]);
+  }, [canvasTheme, opacity, panOffset, strokeColor, strokeStyle, strokeWidth, tool, zoom, bgColor, syncCanvasDimensions]);
 
-  // Request high-performance rAF frame update for live drawing
   const requestFgRender = useCallback(() => {
     cancelAnimationFrame(animFrameRef.current);
     animFrameRef.current = requestAnimationFrame(renderForegroundLayer);
@@ -508,6 +649,9 @@ export default function WhiteboardCanvas({
 
   // ---------- MOUSE & TOUCH INTERACTION HANDLERS ----------
   const handleMouseDown = (e: React.MouseEvent<HTMLCanvasElement>) => {
+    const { x, y } = getCanvasCoords(e.clientX, e.clientY);
+
+    // Pan View
     if (e.button === 1 || tool === 'pan' || spaceHeld) {
       setIsPanning(true);
       panStartRef.current = { x: e.clientX, y: e.clientY };
@@ -515,15 +659,44 @@ export default function WhiteboardCanvas({
       return;
     }
 
-    const { x, y } = getCanvasCoords(e.clientX, e.clientY);
-
+    // Text Tool Overlay Trigger
     if (tool === 'text') {
       setActiveTextInput({ x, y, text: '' });
       return;
     }
 
-    if (tool === 'select') return;
+    // Selection & Drag & Drop Handling
+    if (tool === 'select') {
+      // Check if clicking an already selected element (start group drag)
+      const clickedElem = [...elements].reverse().find((el) => isPointInElement(x, y, el));
 
+      if (clickedElem) {
+        let newSelected = selectedIds;
+        if (!e.shiftKey && !selectedIds.includes(clickedElem.id)) {
+          newSelected = [clickedElem.id];
+          setSelectedIds(newSelected);
+        } else if (e.shiftKey) {
+          newSelected = selectedIds.includes(clickedElem.id)
+            ? selectedIds.filter((id) => id !== clickedElem.id)
+            : [...selectedIds, clickedElem.id];
+          setSelectedIds(newSelected);
+        }
+
+        isDraggingSelectedRef.current = true;
+        dragStartWorldRef.current = { x, y };
+        dragElementsStartRef.current = elements.filter((el) => newSelected.includes(el.id));
+      } else {
+        // Clicked empty space: start Lasso Box Selection
+        if (!e.shiftKey) setSelectedIds([]);
+        isBoxSelectingRef.current = true;
+        startPosRef.current = { x, y };
+        currentPathRef.current = [{ x, y }];
+      }
+      requestFgRender();
+      return;
+    }
+
+    // Shape / Freehand Drawing Trigger
     isDrawingRef.current = true;
     startPosRef.current = { x, y };
     currentPathRef.current = [{ x, y }];
@@ -541,11 +714,46 @@ export default function WhiteboardCanvas({
       return;
     }
 
-    if (!isDrawingRef.current) return;
     const { x, y } = getCanvasCoords(e.clientX, e.clientY);
 
-    // Distance filter: only record point if moved > 2.5px (reduces point clutter, makes strokes liquid smooth!)
+    // 1. Drag & Drop Selected Elements
+    if (isDraggingSelectedRef.current) {
+      const dx = x - dragStartWorldRef.current.x;
+      const dy = y - dragStartWorldRef.current.y;
+
+      const updated = elements.map((elem) => {
+        const orig = dragElementsStartRef.current.find((el) => el.id === elem.id);
+        if (!orig) return elem;
+
+        if (orig.points) {
+          return {
+            ...orig,
+            points: orig.points.map((pt) => ({ x: pt.x + dx, y: pt.y + dy })),
+          };
+        }
+        return {
+          ...orig,
+          x: (orig.x ?? 0) + dx,
+          y: (orig.y ?? 0) + dy,
+        };
+      });
+
+      setElements(updated);
+      return;
+    }
+
+    // 2. Lasso Box Selection Drag
+    if (isBoxSelectingRef.current) {
+      currentPathRef.current = [{ x, y }];
+      requestFgRender();
+      return;
+    }
+
+    // 3. Active Shape / Stroke Drawing Drag
+    if (!isDrawingRef.current) return;
     const pts = currentPathRef.current;
+
+    // Distance filter for liquid-smooth strokes (>2.5px)
     if (pts.length > 0) {
       const lastPt = pts[pts.length - 1];
       const dist = Math.hypot(x - lastPt.x, y - lastPt.y);
@@ -565,6 +773,42 @@ export default function WhiteboardCanvas({
       return;
     }
 
+    // Complete Drag & Drop
+    if (isDraggingSelectedRef.current) {
+      isDraggingSelectedRef.current = false;
+      pushHistory(elements);
+      return;
+    }
+
+    // Complete Lasso Box Selection
+    if (isBoxSelectingRef.current) {
+      isBoxSelectingRef.current = false;
+      const start = startPosRef.current;
+      const pts = currentPathRef.current;
+      if (start && pts.length > 0) {
+        const last = pts[pts.length - 1];
+        const bx = Math.min(start.x, last.x);
+        const by = Math.min(start.y, last.y);
+        const bw = Math.abs(last.x - start.x);
+        const bh = Math.abs(last.y - start.y);
+        const selBounds = { minX: bx, minY: by, maxX: bx + bw, maxY: by + bh };
+
+        const newlySelected = elements
+          .filter((el) => isBoundsOverlapping(getElementBounds(el), selBounds))
+          .map((el) => el.id);
+
+        setSelectedIds(newlySelected);
+      }
+      currentPathRef.current = [];
+      startPosRef.current = null;
+      if (fgCanvasRef.current) {
+        const ctx = fgCanvasRef.current.getContext('2d');
+        if (ctx) ctx.clearRect(0, 0, fgCanvasRef.current.width, fgCanvasRef.current.height);
+      }
+      return;
+    }
+
+    // Complete Drawing Stroke/Shape
     if (!isDrawingRef.current) return;
     isDrawingRef.current = false;
 
@@ -613,16 +857,12 @@ export default function WhiteboardCanvas({
 
     currentPathRef.current = [];
     startPosRef.current = null;
-    
-    // Clear interactive foreground canvas and let Layer 1 render the saved element
+
     if (fgCanvasRef.current) {
       const ctx = fgCanvasRef.current.getContext('2d');
       if (ctx) ctx.clearRect(0, 0, fgCanvasRef.current.width, fgCanvasRef.current.height);
     }
-
-    if (!isToolLocked && tool !== 'pan' && tool !== 'select') {
-      setTool('select');
-    }
+    // NOTE: Tool stays sticky until user explicitly switches tool!
   };
 
   const handleWheel = (e: React.WheelEvent<HTMLCanvasElement>) => {
@@ -656,7 +896,6 @@ export default function WhiteboardCanvas({
       pushHistory([...elements, newElem]);
     }
     setActiveTextInput(null);
-    if (!isToolLocked) setTool('select');
   };
 
   const handleExportPNG = () => {
@@ -677,26 +916,24 @@ export default function WhiteboardCanvas({
   const cursorStyle = tool === 'pan' || spaceHeld || isPanning ? 'grab' : tool === 'select' ? 'default' : 'crosshair';
 
   const TOOLS: { id: ToolType; label: string; icon: any }[] = [
+    { id: 'select', label: 'Selection / Move (Box / Drag)', icon: MousePointer },
     { id: 'pan', label: 'Hand (Pan)', icon: Hand },
-    { id: 'select', label: 'Selection', icon: MousePointer },
     { id: 'rect', label: 'Rectangle', icon: Square },
     { id: 'diamond', label: 'Diamond', icon: Sparkles },
     { id: 'circle', label: 'Ellipse', icon: Circle },
     { id: 'arrow', label: 'Arrow', icon: ArrowRight },
     { id: 'line', label: 'Line', icon: Minus },
-    { id: 'pencil', label: 'Draw', icon: PenTool },
-    { id: 'text', label: 'Text', icon: Type },
+    { id: 'pencil', label: 'Draw / Scribble', icon: PenTool },
+    { id: 'text', label: 'Text Box (Click to type)', icon: Type },
     { id: 'eraser', label: 'Eraser', icon: Eraser },
   ];
 
   return (
     <div className={`w-full h-full flex flex-col bg-white text-neutral-800 relative overflow-hidden select-none ${isFullScreen ? 'fixed inset-0 z-50' : ''}`}>
       
-      {/* Top Multi-Tab Header Bar */}
+      {/* Top Navigation & Multi-Tab Header Bar */}
       <div className="h-10 px-3 bg-white/95 border-b border-neutral-200 flex items-center justify-between shrink-0 text-xs z-30">
         <div className="flex items-center gap-2 overflow-x-auto py-1 max-w-[60%] no-scrollbar">
-          
-          {/* Left Sidebar Restore Button */}
           {!isSidebarOpen && onOpenSidebar && (
             <button
               onClick={onOpenSidebar}
@@ -712,7 +949,6 @@ export default function WhiteboardCanvas({
             <span className="hidden sm:inline">Excalidraw Canvas</span>
           </div>
 
-          {/* Document Tabs Bar */}
           <div className="flex items-center gap-1">
             {docs.map((doc) => (
               <button
@@ -736,7 +972,6 @@ export default function WhiteboardCanvas({
           </div>
         </div>
 
-        {/* Right Action Controls */}
         <div className="flex items-center gap-1.5 shrink-0">
           {isRenaming ? (
             <form onSubmit={handleSaveRename} className="flex items-center gap-1">
@@ -873,6 +1108,32 @@ export default function WhiteboardCanvas({
               className="w-full accent-indigo-600 cursor-pointer"
             />
           </div>
+
+          {/* Selection Actions Panel (Delete whole selected element, Duplicate) */}
+          {selectedIds.length > 0 && (
+            <div className="pt-2 border-t border-neutral-200 mt-1 flex flex-col gap-2">
+              <span className="font-bold text-[11px] text-indigo-600 uppercase tracking-wider block">
+                Selected ({selectedIds.length})
+              </span>
+              <div className="flex items-center gap-1.5">
+                <button
+                  onClick={handleDeleteSelected}
+                  className="flex-1 py-1.5 bg-red-50 text-red-600 hover:bg-red-100 rounded-md font-semibold text-[11px] flex items-center justify-center gap-1 cursor-pointer transition-all"
+                  title="Delete Selected Elements (or press Delete key)"
+                >
+                  <Trash2 className="w-3.5 h-3.5" />
+                  <span>Delete</span>
+                </button>
+                <button
+                  onClick={handleDuplicateSelected}
+                  className="p-1.5 bg-neutral-100 text-neutral-700 hover:bg-neutral-200 rounded-md font-semibold cursor-pointer transition-all"
+                  title="Duplicate Selected"
+                >
+                  <Copy className="w-3.5 h-3.5" />
+                </button>
+              </div>
+            </div>
+          )}
         </div>
 
         {/* Dual Canvas Display Container */}
@@ -880,16 +1141,6 @@ export default function WhiteboardCanvas({
           
           {/* Top Excalidraw Floating Toolbar */}
           <div className="absolute top-3 left-1/2 -translate-x-1/2 z-30 bg-white/95 backdrop-blur-md border border-neutral-250 shadow-md rounded-2xl px-2 py-1.5 flex items-center gap-1">
-            <button
-              onClick={() => setIsToolLocked(!isToolLocked)}
-              className={`p-2 rounded-xl transition-all ${isToolLocked ? 'bg-indigo-100 text-indigo-600' : 'text-neutral-600 hover:bg-neutral-100'}`}
-              title={isToolLocked ? 'Keep tool selected' : 'Lock tool'}
-            >
-              {isToolLocked ? <Lock className="w-4 h-4" /> : <Unlock className="w-4 h-4" />}
-            </button>
-
-            <div className="h-5 w-px bg-neutral-200 mx-0.5" />
-
             {TOOLS.map((t) => {
               const Icon = t.icon;
               return (
@@ -928,6 +1179,28 @@ export default function WhiteboardCanvas({
                 className="px-2.5 py-1 bg-white border-2 border-indigo-500 rounded-lg shadow-lg text-xs font-semibold outline-none text-neutral-900 min-w-[180px]"
               />
             </form>
+          )}
+
+          {/* Selection Floating Action Dock (When 1+ elements selected) */}
+          {selectedIds.length > 0 && (
+            <div className="absolute top-16 left-1/2 -translate-x-1/2 z-30 bg-white/95 backdrop-blur-md border border-neutral-250 shadow-md rounded-xl px-3 py-1 flex items-center gap-2 text-xs font-bold animate-fade-in">
+              <span className="text-neutral-500 text-[11px]">{selectedIds.length} selected</span>
+              <div className="h-4 w-px bg-neutral-200" />
+              <button
+                onClick={handleDuplicateSelected}
+                className="p-1 hover:bg-neutral-100 text-neutral-700 rounded cursor-pointer"
+                title="Duplicate"
+              >
+                <Copy className="w-3.5 h-3.5" />
+              </button>
+              <button
+                onClick={handleDeleteSelected}
+                className="p-1 hover:bg-red-50 text-red-600 rounded cursor-pointer"
+                title="Delete Selected Elements (Delete key)"
+              >
+                <Trash2 className="w-3.5 h-3.5" />
+              </button>
+            </div>
           )}
 
           {/* Bottom-Left Zoom & Undo Bar */}
