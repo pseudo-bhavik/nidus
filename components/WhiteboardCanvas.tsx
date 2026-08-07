@@ -295,43 +295,53 @@ export default function WhiteboardCanvas({
 
   // Canvas Hand-Drawn Rendering Effect
   useEffect(() => {
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-    const ctx = canvas.getContext('2d');
-    if (!ctx) return;
+    let animId: number;
 
-    // Canvas size matching container bounds
-    const rect = canvas.getBoundingClientRect();
-    if (canvas.width !== rect.width || canvas.height !== rect.height) {
-      canvas.width = rect.width;
-      canvas.height = rect.height;
-    }
+    const renderCanvas = () => {
+      const canvas = canvasRef.current;
+      if (!canvas) return;
+      const ctx = canvas.getContext('2d');
+      if (!ctx) return;
 
-    // Safely get Rough.js instance with fallbacks
-    const rc = getRoughCanvas(canvas);
-
-    // Clear background
-    ctx.fillStyle = canvasTheme === 'dark' ? '#121212' : '#ffffff';
-    ctx.fillRect(0, 0, canvas.width, canvas.height);
-
-    // Save context transform state for Infinite Pan & Zoom
-    ctx.save();
-    ctx.translate(panOffset.x, panOffset.y);
-    ctx.scale(zoom, zoom);
-
-    // Draw Excalidraw Dots Grid
-    ctx.fillStyle = canvasTheme === 'dark' ? '#2b2b2b' : '#e0e0e0';
-    const gridSize = 24;
-    const startX = Math.floor(-panOffset.x / zoom / gridSize) * gridSize - gridSize * 2;
-    const startY = Math.floor(-panOffset.y / zoom / gridSize) * gridSize - gridSize * 2;
-    const endX = startX + Math.ceil(canvas.width / zoom) + gridSize * 4;
-    const endY = startY + Math.ceil(canvas.height / zoom) + gridSize * 4;
-
-    for (let x = startX; x < endX; x += gridSize) {
-      for (let y = startY; y < endY; y += gridSize) {
-        ctx.fillRect(x, y, 1.5, 1.5);
+      // Canvas size matching container bounds
+      const rect = canvas.getBoundingClientRect();
+      if (rect.width > 0 && rect.height > 0) {
+        if (canvas.width !== Math.floor(rect.width) || canvas.height !== Math.floor(rect.height)) {
+          canvas.width = Math.floor(rect.width);
+          canvas.height = Math.floor(rect.height);
+        }
       }
-    }
+
+      // Safely get Rough.js instance with fallbacks
+      const rc = getRoughCanvas(canvas);
+
+      // Clear background
+      ctx.fillStyle = canvasTheme === 'dark' ? '#121212' : '#ffffff';
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+      // Save context transform state for Infinite Pan & Zoom
+      const safeZoom = Math.max(0.1, zoom);
+      ctx.save();
+      ctx.translate(panOffset.x, panOffset.y);
+      ctx.scale(safeZoom, safeZoom);
+
+      // Draw Excalidraw Dots Grid (safely bounded)
+      ctx.fillStyle = canvasTheme === 'dark' ? '#2b2b2b' : '#e0e0e0';
+      const gridSize = 24;
+      const startX = Math.floor(-panOffset.x / safeZoom / gridSize) * gridSize - gridSize * 2;
+      const startY = Math.floor(-panOffset.y / safeZoom / gridSize) * gridSize - gridSize * 2;
+      const canvasW = canvas.width || 800;
+      const canvasH = canvas.height || 600;
+      const endX = Math.min(startX + 3000, startX + Math.ceil(canvasW / safeZoom) + gridSize * 4);
+      const endY = Math.min(startY + 3000, startY + Math.ceil(canvasH / safeZoom) + gridSize * 4);
+
+      if (gridSize > 0 && endX > startX && endY > startY) {
+        for (let x = startX; x < endX; x += gridSize) {
+          for (let y = startY; y < endY; y += gridSize) {
+            ctx.fillRect(x, y, 1.5, 1.5);
+          }
+        }
+      }
 
     // Render elements using Rough.js or 2D Context fallback
     elements.forEach((elem) => {
@@ -507,14 +517,17 @@ export default function WhiteboardCanvas({
           }
         } else if (tool === 'arrow' || tool === 'line') {
           if (rc) rc.line(startPos.x, startPos.y, lastPt.x, lastPt.y, roughOptions);
-          else {
-            ctx.strokeStyle = strokeColor; ctx.beginPath(); ctx.moveTo(startPos.x, startPos.y); ctx.lineTo(lastPt.x, lastPt.y); ctx.stroke();
-          }
         }
       }
     }
 
     ctx.restore();
+    };
+
+    animId = requestAnimationFrame(renderCanvas);
+    return () => {
+      cancelAnimationFrame(animId);
+    };
   }, [elements, currentPath, isDrawing, canvasTheme, tool, strokeColor, bgColor, strokeWidth, strokeStyle, roughness, opacity, panOffset, zoom, startPos]);
 
   // Convert Screen Coordinates to World Infinite Canvas Coordinates
