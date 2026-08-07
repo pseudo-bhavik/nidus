@@ -14,4 +14,23 @@ export interface Bookmark {
   read_time_minutes: number;
 }
 
-export type ViewType = 'all' | 'unsorted' | 'trash' | string; // string represents specific category names
+export type ViewType = 'all' | 'unsorted' | 'trash' | 'sticky-notes' | 'canvas' | string; // string represents specific category names
+
+export interface StickyNote {
+  id: string;
+  title: string;
+  content: string;
+  color: 'yellow' | 'green' | 'blue' | 'pink' | 'purple' | 'orange' | 'dark';
+  is_pinned?: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface WhiteboardCanvasDoc {
+  id: string;
+  title: string;
+  elementsData: any[];
+  appStateData?: any;
+  created_at: string;
+  updated_at: string;
+}

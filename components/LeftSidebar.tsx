@@ -1,5 +1,5 @@
 import React from 'react';
-import { Bookmark, Inbox, Trash2, Folder, Database, UploadCloud, Settings, LogIn, User, ChevronLeft, Plus, Keyboard } from 'lucide-react';
+import { Bookmark, Inbox, Trash2, Folder, Database, UploadCloud, Settings, LogIn, User, ChevronLeft, Plus, Keyboard, StickyNote, PenTool } from 'lucide-react';
 import { Bookmark as BookmarkType, ViewType } from '../lib/types';
 
 interface LeftSidebarProps {
@@ -65,7 +65,7 @@ export default function LeftSidebar({
               style={{ width: '28px', height: '28px', objectFit: 'contain' }}
             />
             <span className="font-bold text-sm tracking-tight text-neutral-800">Nidus</span>
-            <span className="text-[9px] font-bold bg-hn-orange/10 text-hn-orange px-1 rounded" style={{ color: 'var(--accent-color)', backgroundColor: 'rgba(var(--accent-rgb), 0.1)' }}>v1.2</span>
+            <span className="text-[9px] font-bold bg-hn-orange/10 text-hn-orange px-1 rounded" style={{ color: 'var(--accent-color)', backgroundColor: 'rgba(var(--accent-rgb), 0.1)' }}>v1.6</span>
           </div>
           <button
             onClick={onCloseSidebar}
@@ -121,6 +121,46 @@ export default function LeftSidebar({
               <span>Trash</span>
             </div>
             <span className="text-[10px] text-neutral-400 font-bold">{trashedCount}</span>
+          </button>
+        </div>
+
+        {/* Separator */}
+        <hr className="border-border-color my-1 mx-4" />
+
+        {/* Workspace Notes & Apps */}
+        <div className="px-2 py-1 flex flex-col gap-0.5">
+          <div className="px-3 flex items-center justify-between text-[10px] font-bold text-neutral-400 uppercase tracking-wider select-none mb-1">
+            <span>Workspace</span>
+          </div>
+
+          <button
+            onClick={() => onViewChange('sticky-notes')}
+            className={`w-full px-3 py-1.5 rounded-md flex items-center justify-between font-bold cursor-pointer transition-all-custom ${
+              currentView === 'sticky-notes'
+                ? 'bg-neutral-900/5 text-neutral-800'
+                : 'text-neutral-500 hover:bg-neutral-900/3 hover:text-neutral-700'
+            }`}
+          >
+            <div className="flex items-center gap-2">
+              <StickyNote className="w-3.5 h-3.5 shrink-0 text-amber-500" />
+              <span>Sticky Notes</span>
+            </div>
+            <span className="text-[9px] font-bold bg-amber-500/10 text-amber-600 px-1.5 py-0.2 rounded-full">Note</span>
+          </button>
+
+          <button
+            onClick={() => onViewChange('canvas')}
+            className={`w-full px-3 py-1.5 rounded-md flex items-center justify-between font-bold cursor-pointer transition-all-custom ${
+              currentView === 'canvas'
+                ? 'bg-neutral-900/5 text-neutral-800'
+                : 'text-neutral-500 hover:bg-neutral-900/3 hover:text-neutral-700'
+            }`}
+          >
+            <div className="flex items-center gap-2">
+              <PenTool className="w-3.5 h-3.5 shrink-0 text-hn-orange" style={{ color: 'var(--accent-color)' }} />
+              <span>Whiteboard Canvas</span>
+            </div>
+            <span className="text-[9px] font-bold bg-hn-orange/10 text-hn-orange px-1.5 py-0.2 rounded-full" style={{ color: 'var(--accent-color)', backgroundColor: 'rgba(var(--accent-rgb), 0.1)' }}>Excalidraw</span>
           </button>
         </div>
 

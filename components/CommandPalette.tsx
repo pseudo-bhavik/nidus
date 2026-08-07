@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Search, Terminal, ArrowRight, CornerDownLeft, Inbox, Trash2, Library, CheckSquare, Plus, FileSpreadsheet } from 'lucide-react';
+import { Search, Terminal, ArrowRight, CornerDownLeft, Inbox, Trash2, Library, CheckSquare, Plus, FileSpreadsheet, StickyNote, PenTool } from 'lucide-react';
 import { Bookmark } from '../lib/types';
 
 interface CommandPaletteProps {
@@ -83,6 +83,20 @@ export default function CommandPalette({
       subtitle: 'Navigate to full bookmark catalog',
       icon: <Library className="w-4 h-4" />,
       action: () => { onNavigateView('all'); onClose(); },
+    },
+    {
+      id: 'go-sticky-notes',
+      title: 'Open Sticky Notes Workspace',
+      subtitle: 'Create and manage colorful quick notes',
+      icon: <StickyNote className="w-4 h-4 text-amber-500" />,
+      action: () => { onNavigateView('sticky-notes'); onClose(); },
+    },
+    {
+      id: 'go-whiteboard-canvas',
+      title: 'Open Whiteboard Canvas (Excalidraw)',
+      subtitle: 'Draw, sketch diagrams, and take visual canvas notes',
+      icon: <PenTool className="w-4 h-4 text-hn-orange" style={{ color: 'var(--accent-color)' }} />,
+      action: () => { onNavigateView('canvas'); onClose(); },
     },
     {
       id: 'go-unsorted',

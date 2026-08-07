@@ -178,7 +178,21 @@ export default function SettingsModal({
                 </div>
 
                 <div>
-                  <h4 className="font-bold text-neutral-800 mb-1">5. Vim Hotkeys & Command Console</h4>
+                  <h4 className="font-bold text-neutral-800 mb-1">5. Sticky Notes Workspace</h4>
+                  <p className="mb-2">
+                    Create, edit, pin, and color-code quick sticky notes in the <strong>Sticky Notes</strong> section. Filter notes, change note palette colors, and copy note contents with one click.
+                  </p>
+                </div>
+
+                <div>
+                  <h4 className="font-bold text-neutral-800 mb-1">6. Whiteboard Canvas (Excalidraw Integration)</h4>
+                  <p className="mb-2">
+                    Access a complete <strong>Excalidraw</strong> drawing & visual note-taking canvas directly inside Nidus under the <strong>Whiteboard Canvas</strong> sidebar option. Draw diagrams, sketch wireframes, create multiple whiteboards, switch canvas light/dark themes, and export high-resolution PNG images.
+                  </p>
+                </div>
+
+                <div>
+                  <h4 className="font-bold text-neutral-800 mb-1">7. Vim Hotkeys & Command Console</h4>
                   <p>
                     Navigate links instantly using Vim navigation keys: press <strong>j</strong> to move down and <strong>k</strong> to move up. Perform bulk actions using selection checkboxes. Press <strong>Cmd+K</strong> (or <strong>Ctrl+K</strong>) to open the Command Palette to find and execute actions instantly.
                   </p>

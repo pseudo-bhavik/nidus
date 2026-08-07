@@ -6,6 +6,8 @@ import { Bookmark, ViewType } from '../lib/types';
 import LeftSidebar from '../components/LeftSidebar';
 import CentralMonitor from '../components/CentralMonitor';
 import InspectorPanel from '../components/InspectorPanel';
+import StickyNotesView from '../components/StickyNotesView';
+import WhiteboardCanvas from '../components/WhiteboardCanvas';
 import CommandPalette from '../components/CommandPalette';
 import ImportExportModal from '../components/ImportExportModal';
 import AuthModal from '../components/AuthModal';
@@ -1125,44 +1127,55 @@ export default function Dashboard() {
           </div>
         )}
 
-        <CentralMonitor
-          bookmarks={bookmarks}
-          filteredBookmarks={filteredBookmarks}
-          currentView={currentView}
-          onAddBookmark={handleAddBookmark}
-          onUpdateBookmark={handleUpdateBookmark}
-          onDeleteBookmark={handleDeleteBookmark}
-          onRestoreBookmark={handleRestoreBookmark}
-          activeBookmarkId={activeBookmark ? activeBookmark.id : null}
-          onSelectBookmark={(b) => setActiveBookmark(b)}
-          categories={categoriesList}
-          searchQuery={searchQuery}
-          onSearchQueryChange={setSearchQuery}
-          selectedIds={selectedIds}
-          onToggleSelect={handleToggleSelect}
-          onToggleSelectAll={handleToggleSelectAll}
-          onBulkComplete={handleBulkComplete}
-          onBulkTrash={handleBulkTrash}
-          onBulkChangeCategory={handleBulkChangeCategory}
-          onBulkChangePriority={handleBulkChangePriority}
-          isSidebarOpen={isSidebarOpen}
-          onOpenSidebar={() => setIsSidebarOpen(true)}
-          onRowContextMenu={handleRowContextMenu}
-          highPriorityOnly={highPriorityOnly}
-          onToggleHighPriority={() => setHighPriorityOnly(!highPriorityOnly)}
-          activeDensity={activeDensity}
-          activeHighlightStyle={activeHighlightStyle}
-        />
+        {currentView === 'sticky-notes' ? (
+          <StickyNotesView
+            isSidebarOpen={isSidebarOpen}
+            onOpenSidebar={() => setIsSidebarOpen(true)}
+          />
+        ) : currentView === 'canvas' ? (
+          <WhiteboardCanvas activeTheme={activeTheme} />
+        ) : (
+          <CentralMonitor
+            bookmarks={bookmarks}
+            filteredBookmarks={filteredBookmarks}
+            currentView={currentView}
+            onAddBookmark={handleAddBookmark}
+            onUpdateBookmark={handleUpdateBookmark}
+            onDeleteBookmark={handleDeleteBookmark}
+            onRestoreBookmark={handleRestoreBookmark}
+            activeBookmarkId={activeBookmark ? activeBookmark.id : null}
+            onSelectBookmark={(b) => setActiveBookmark(b)}
+            categories={categoriesList}
+            searchQuery={searchQuery}
+            onSearchQueryChange={setSearchQuery}
+            selectedIds={selectedIds}
+            onToggleSelect={handleToggleSelect}
+            onToggleSelectAll={handleToggleSelectAll}
+            onBulkComplete={handleBulkComplete}
+            onBulkTrash={handleBulkTrash}
+            onBulkChangeCategory={handleBulkChangeCategory}
+            onBulkChangePriority={handleBulkChangePriority}
+            isSidebarOpen={isSidebarOpen}
+            onOpenSidebar={() => setIsSidebarOpen(true)}
+            onRowContextMenu={handleRowContextMenu}
+            highPriorityOnly={highPriorityOnly}
+            onToggleHighPriority={() => setHighPriorityOnly(!highPriorityOnly)}
+            activeDensity={activeDensity}
+            activeHighlightStyle={activeHighlightStyle}
+          />
+        )}
       </div>
 
       {/* Right Inspector Slider */}
-      <InspectorPanel
-        bookmark={activeBookmark}
-        onClose={() => setActiveBookmark(null)}
-        onUpdate={handleUpdateBookmark}
-        onDelete={handleDeleteBookmark}
-        onRestore={handleRestoreBookmark}
-      />
+      {currentView !== 'sticky-notes' && currentView !== 'canvas' && (
+        <InspectorPanel
+          bookmark={activeBookmark}
+          onClose={() => setActiveBookmark(null)}
+          onUpdate={handleUpdateBookmark}
+          onDelete={handleDeleteBookmark}
+          onRestore={handleRestoreBookmark}
+        />
+      )}
 
       {/* Cmd+K Modal Palette */}
       <CommandPalette
