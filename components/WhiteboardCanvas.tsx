@@ -441,7 +441,7 @@ export default function WhiteboardCanvas({
   // Mouse Interaction Handlers
   const handleMouseDown = (e: React.MouseEvent<HTMLCanvasElement>) => {
     // Middle click or Pan tool activates canvas panning
-    if (e.button === 1 || tool === 'pan' || e.spaceKey) {
+    if (e.button === 1 || tool === 'pan' || (e as any).spaceKey) {
       setIsPanning(true);
       setPanStart({ x: e.clientX - panOffset.x, y: e.clientY - panOffset.y });
       return;
