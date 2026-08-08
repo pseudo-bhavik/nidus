@@ -445,7 +445,7 @@ export default function StickyNotesView({ isSidebarOpen, onOpenSidebar }: Sticky
           {/* Card Header Bar with Grip & Controls */}
           <div className={`-mx-4 -mt-4 px-3 py-2 rounded-t-2xl mb-3 flex items-center justify-between ${style.header}`}>
             <div className="flex items-center gap-1.5 min-w-0">
-              <GripVertical className="w-3.5 h-3.5 text-neutral-400 cursor-grab active:cursor-grabbing shrink-0 hover:text-neutral-700" title="Drag to reorder note position" />
+              <GripVertical className="w-3.5 h-3.5 text-neutral-400 cursor-grab active:cursor-grabbing shrink-0 hover:text-neutral-700" />
               <input
                 type="text"
                 value={note.title}
