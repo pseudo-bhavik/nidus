@@ -160,9 +160,14 @@ export default function WhiteboardCanvas({
   const animFrameRef = useRef<number>(0);
 
   // Explicitly focus textarea whenever activeTextInput opens
+  // Use requestAnimationFrame to ensure the DOM has painted and the ref is attached
   useEffect(() => {
-    if (activeTextInput && textareaRef.current) {
-      textareaRef.current.focus();
+    if (activeTextInput) {
+      requestAnimationFrame(() => {
+        if (textareaRef.current) {
+          textareaRef.current.focus();
+        }
+      });
     }
   }, [activeTextInput]);
 
@@ -767,6 +772,8 @@ export default function WhiteboardCanvas({
     // Save any active open text input before starting a new action
     if (activeTextInput && activeTextInput.text.trim()) {
       handleTextSubmit();
+    } else if (activeTextInput) {
+      setActiveTextInput(null);
     }
 
     // Text Tool Overlay Trigger
@@ -1365,40 +1372,7 @@ export default function WhiteboardCanvas({
             })}
           </div>
 
-          {/* Text Tool Active Input Overlay (Bulletproof Focus & Event Isolation) */}
-          {activeTextInput && (
-            <form
-              onSubmit={(e) => {
-                e.preventDefault();
-                handleTextSubmit();
-              }}
-              style={{
-                position: 'absolute',
-                top: activeTextInput.y * zoom + panOffset.y,
-                left: activeTextInput.x * zoom + panOffset.x,
-                zIndex: 50,
-              }}
-            >
-              <textarea
-                ref={textareaRef}
-                value={activeTextInput.text}
-                onChange={(e) => setActiveTextInput({ ...activeTextInput, text: e.target.value })}
-                onKeyDown={(e) => {
-                  e.stopPropagation();
-                  if (e.key === 'Enter' && !e.shiftKey) {
-                    e.preventDefault();
-                    handleTextSubmit();
-                  }
-                }}
-                onKeyUp={(e) => e.stopPropagation()}
-                onKeyPress={(e) => e.stopPropagation()}
-                onBlur={() => handleTextSubmit()}
-                placeholder="Type note & press Enter (Shift+Enter for new line)..."
-                rows={Math.max(1, activeTextInput.text.split('\n').length)}
-                className="px-2.5 py-1.5 bg-white/95 border-2 border-indigo-500 rounded-lg shadow-2xl text-sm font-semibold outline-none text-neutral-900 min-w-[180px] resize-none leading-snug"
-              />
-            </form>
-          )}
+
 
           {/* Floating Selection Dock Floating DIRECTLY ABOVE Selected Element(s) */}
           {selectedIds.length > 0 && selectedElems.length > 0 && (
@@ -1494,9 +1468,49 @@ export default function WhiteboardCanvas({
             onMouseMove={handleMouseMove}
             onMouseUp={handleMouseUp}
             onMouseLeave={handleMouseUp}
-            className="w-full h-full block absolute inset-0 z-10"
+            className={`w-full h-full block absolute inset-0 z-10 ${activeTextInput ? 'pointer-events-none' : ''}`}
             style={{ cursor: cursorStyle }}
           />
+
+          {/* Text Tool Active Input Overlay — MUST be after canvas layers so it's on top in DOM order */}
+          {activeTextInput && (
+            <form
+              onSubmit={(e) => {
+                e.preventDefault();
+                handleTextSubmit();
+              }}
+              onMouseDown={(e) => e.stopPropagation()}
+              style={{
+                position: 'absolute',
+                top: activeTextInput.y * zoom + panOffset.y,
+                left: activeTextInput.x * zoom + panOffset.x,
+                zIndex: 60,
+              }}
+            >
+              <textarea
+                ref={textareaRef}
+                autoFocus
+                value={activeTextInput.text}
+                onChange={(e) => setActiveTextInput({ ...activeTextInput, text: e.target.value })}
+                onKeyDown={(e) => {
+                  e.stopPropagation();
+                  if (e.key === 'Escape') {
+                    e.preventDefault();
+                    handleTextSubmit();
+                  }
+                  if (e.key === 'Enter' && !e.shiftKey) {
+                    e.preventDefault();
+                    handleTextSubmit();
+                  }
+                }}
+                onKeyUp={(e) => e.stopPropagation()}
+                placeholder="Type here... (Enter to save, Shift+Enter for newline)"
+                rows={Math.max(2, activeTextInput.text.split('\n').length)}
+                className="px-3 py-2 bg-white border-2 border-indigo-500 rounded-lg shadow-2xl text-sm font-medium outline-none text-neutral-900 min-w-[220px] resize-none leading-relaxed focus:ring-2 focus:ring-indigo-300"
+                style={{ caretColor: '#4f46e5' }}
+              />
+            </form>
+          )}
         </div>
       </div>
     </div>
