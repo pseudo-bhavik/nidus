@@ -14,7 +14,7 @@ import AuthModal from '../components/AuthModal';
 import SettingsModal from '../components/SettingsModal';
 import EditBookmarkModal from '../components/EditBookmarkModal';
 import ContextMenu from '../components/ContextMenu';
-import { AlertTriangle, Info, Terminal, FolderPlus, Edit2, GitMerge, Eraser, Trash2 } from 'lucide-react';
+import { AlertTriangle, Info, Terminal, FolderPlus, Edit2, GitMerge, Eraser, Trash2, EyeOff, X } from 'lucide-react';
 
 const SEED_BOOKMARKS: Bookmark[] = [
   {
@@ -122,6 +122,7 @@ export default function Dashboard({ initialView }: { initialView?: ViewType } = 
 
   // Sticky Notes Home Screen Widget Visibility Toggle
   const [showStickyWidget, setShowStickyWidget] = useState(true);
+  const [privateToastUrl, setPrivateToastUrl] = useState<string | null>(null);
 
   useEffect(() => {
     const storedShowWidget = localStorage.getItem('nidus_show_sticky_widget');
@@ -1302,7 +1303,9 @@ export default function Dashboard({ initialView }: { initialView?: ViewType } = 
           onOpenPrivateLink={() => {
             const url = contextMenu.bookmark!.url;
             try { navigator.clipboard.writeText(url); } catch (e) {}
-            window.open(url, '_blank', 'incognito=yes,private=yes');
+            setPrivateToastUrl(url);
+            window.open(url, '_blank');
+            setTimeout(() => setPrivateToastUrl(null), 10000);
           }}
           onEdit={() => {
             setEditBookmark(contextMenu.bookmark);
@@ -1315,6 +1318,26 @@ export default function Dashboard({ initialView }: { initialView?: ViewType } = 
           }
           onDelete={() => handleDeleteBookmark(contextMenu.bookmark!.id)}
         />
+      )}
+
+      {/* Incognito / Private Window Launch Helper Toast */}
+      {privateToastUrl && (
+        <div className="fixed top-4 left-1/2 -translate-x-1/2 z-50 bg-neutral-900 text-white border border-neutral-700 shadow-2xl px-4 py-3 rounded-none flex items-center gap-3 text-xs max-w-md animate-fade-in pointer-events-auto">
+          <EyeOff className="w-4 h-4 text-purple-400 shrink-0" />
+          <div className="flex-1 min-w-0">
+            <div className="font-bold text-amber-400">URL Copied for Incognito / Private Mode!</div>
+            <div className="text-[11px] text-neutral-300 mt-0.5 leading-relaxed">
+              Press <kbd className="px-1 py-0.2 bg-neutral-800 border border-neutral-700 text-white rounded font-mono text-[10px]">Ctrl+Shift+N</kbd> (or <kbd className="px-1 py-0.2 bg-neutral-800 border border-neutral-700 text-white rounded font-mono text-[10px]">Cmd+Shift+N</kbd>) and paste (<kbd className="px-1 py-0.2 bg-neutral-800 border border-neutral-700 text-white rounded font-mono text-[10px]">Ctrl+V</kbd>).
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={() => setPrivateToastUrl(null)}
+            className="p-1 hover:bg-neutral-800 text-neutral-400 hover:text-white rounded-none cursor-pointer"
+          >
+            <X className="w-3.5 h-3.5" />
+          </button>
+        </div>
       )}
 
       {/* Custom Collection Delete Confirmation Modal */}
