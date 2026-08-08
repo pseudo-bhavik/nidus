@@ -303,12 +303,13 @@ export default function StickyNotesView({ isSidebarOpen, onOpenSidebar }: Sticky
     <div className="w-full h-full flex flex-col bg-white text-neutral-800 relative overflow-hidden select-none">
       
       {/* Top Header Bar */}
-      <div className="h-12 px-4 bg-white/95 border-b border-neutral-200 flex items-center justify-between shrink-0 text-xs z-20">
-        <div className="flex items-center gap-3">
-          {!isSidebarOpen && (
+      <div className="min-h-[52px] py-2 px-3 sm:px-4 bg-white/95 border-b border-neutral-200 flex flex-wrap items-center justify-between gap-2 shrink-0 text-xs z-20">
+        {/* Left Side Title & Sidebar Toggle */}
+        <div className="flex items-center gap-2.5 shrink-0">
+          {!isSidebarOpen && onOpenSidebar && (
             <button
               onClick={onOpenSidebar}
-              className="p-1 hover:bg-neutral-100 rounded-md text-neutral-600 cursor-pointer mr-1"
+              className="p-1 hover:bg-neutral-100 rounded-md text-neutral-600 cursor-pointer mr-0.5"
               title="Open Sidebar"
             >
               <StickyNoteIcon className="w-4 h-4 text-hn-orange" style={{ color: 'var(--accent-color)' }} />
@@ -316,7 +317,7 @@ export default function StickyNotesView({ isSidebarOpen, onOpenSidebar }: Sticky
           )}
 
           <div className="flex items-center gap-2">
-            <StickyNoteIcon className="w-4.5 h-4.5 text-hn-orange" style={{ color: 'var(--accent-color)' }} />
+            <StickyNoteIcon className="w-4.5 h-4.5 text-hn-orange shrink-0" style={{ color: 'var(--accent-color)' }} />
             <h1 className="font-bold text-sm text-neutral-900 tracking-tight">Sticky Notes</h1>
             <span className="px-2 py-0.5 bg-neutral-100 border border-neutral-200 rounded-full text-[10px] font-bold text-neutral-600">
               {notes.length}
@@ -324,46 +325,50 @@ export default function StickyNotesView({ isSidebarOpen, onOpenSidebar }: Sticky
           </div>
         </div>
 
-        {/* Action Controls & Search */}
-        <div className="flex items-center gap-2">
+        {/* Right Side Action Controls & Search */}
+        <div className="flex items-center gap-2.5 flex-wrap">
           {/* Cloud Sync Status Badge */}
           <div
-            className="flex items-center gap-1 px-2 py-1 rounded-md bg-neutral-50 border border-neutral-200 text-[10px] text-neutral-500 font-medium"
+            className="flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-neutral-50 border border-neutral-200 text-[10px] text-neutral-500 font-semibold shrink-0"
             title="Sticky notes auto-sync across all signed in devices"
           >
             {isSyncing ? (
-              <RefreshCw className="w-3 h-3 text-indigo-500 animate-spin" />
+              <RefreshCw className="w-3 h-3 text-indigo-500 animate-spin shrink-0" />
             ) : (
-              <Cloud className="w-3 h-3 text-emerald-500" />
+              <Cloud className="w-3 h-3 text-emerald-500 shrink-0" />
             )}
-            <span className="hidden sm:inline">{isSyncing ? 'Syncing...' : 'Cloud Synced'}</span>
+            <span className="hidden md:inline">{isSyncing ? 'Syncing...' : 'Cloud Synced'}</span>
           </div>
 
-          <div className="relative">
-            <Search className="w-3.5 h-3.5 absolute left-2.5 top-1/2 -translate-y-1/2 text-neutral-400" />
+          {/* Search Input with Non-Overlapping Icon */}
+          <div className="relative shrink-0">
+            <Search className="w-3.5 h-3.5 absolute left-3 top-1/2 -translate-y-1/2 text-neutral-400 pointer-events-none" />
             <input
               type="text"
               placeholder="Search notes..."
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
-              className="pl-8 pr-3 py-1 bg-neutral-100 border border-neutral-200 rounded-lg text-xs outline-none focus:bg-white focus:ring-2 focus:ring-indigo-500/20 text-neutral-800 w-36 sm:w-48 transition-all"
+              className="pl-9 pr-7 py-1 bg-neutral-100 border border-neutral-200 rounded-lg text-xs outline-none focus:bg-white focus:ring-2 focus:ring-indigo-500/20 text-neutral-800 w-36 sm:w-44 transition-all"
+              style={{ paddingLeft: '2.25rem' }}
             />
             {searchQuery && (
               <button
+                type="button"
                 onClick={() => setSearchQuery('')}
-                className="absolute right-2 top-1/2 -translate-y-1/2 text-neutral-400 hover:text-neutral-600"
+                className="absolute right-2 top-1/2 -translate-y-1/2 text-neutral-400 hover:text-neutral-600 cursor-pointer"
               >
                 <X className="w-3 h-3" />
               </button>
             )}
           </div>
 
-          {/* Color Filter */}
-          <div className="flex items-center gap-1 bg-neutral-100 p-0.5 rounded-lg border border-neutral-200 hidden sm:flex">
+          {/* Color Filter Bar — Proper Padding & Spacing */}
+          <div className="flex items-center gap-1.5 bg-neutral-100 px-2 py-1 rounded-lg border border-neutral-200 shrink-0">
             <button
+              type="button"
               onClick={() => setFilterColor(null)}
-              className={`px-1.5 py-0.5 text-[10px] font-bold rounded ${
-                filterColor === null ? 'bg-white shadow-2xs text-neutral-900' : 'text-neutral-500 hover:text-neutral-800'
+              className={`px-2 py-0.5 text-[10px] font-bold rounded transition-all cursor-pointer ${
+                filterColor === null ? 'bg-white shadow-2xs text-neutral-900 border border-neutral-200' : 'text-neutral-500 hover:text-neutral-800'
               }`}
             >
               All
@@ -371,17 +376,21 @@ export default function StickyNotesView({ isSidebarOpen, onOpenSidebar }: Sticky
             {Object.keys(COLOR_MAP).map((col) => (
               <button
                 key={col}
+                type="button"
                 onClick={() => setFilterColor(filterColor === col ? null : col)}
-                className={`w-3.5 h-3.5 rounded-full transition-transform ${COLOR_MAP[col].dot} ${
+                className={`w-3.5 h-3.5 rounded-full transition-transform cursor-pointer ${COLOR_MAP[col].dot} ${
                   filterColor === col ? 'ring-2 ring-indigo-500 scale-110' : 'hover:scale-105'
                 }`}
+                title={`Filter by ${col}`}
               />
             ))}
           </div>
 
+          {/* New Note Button */}
           <button
+            type="button"
             onClick={() => handleAddNote('yellow')}
-            className="px-3 py-1.5 bg-neutral-900 text-white hover:bg-neutral-800 rounded-lg font-bold text-xs flex items-center gap-1.5 cursor-pointer transition-all shadow-xs"
+            className="px-3 py-1.5 bg-neutral-900 text-white hover:bg-neutral-800 rounded-lg font-bold text-xs flex items-center gap-1.5 cursor-pointer transition-all shadow-xs shrink-0"
           >
             <Plus className="w-3.5 h-3.5" />
             <span>New Note</span>
