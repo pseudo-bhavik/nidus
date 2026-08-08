@@ -375,18 +375,34 @@ export default function SettingsModal({
                     </span>
                   </div>
                   <div className="flex items-center gap-3">
-                    <span className="text-[10px] text-neutral-400 font-bold">Small</span>
+                    <span className="text-[10px] text-neutral-400 font-bold">100%</span>
                     <input
                       type="range"
-                      min="0.95"
-                      max="1.15"
-                      step="0.02"
+                      min="0.90"
+                      max="1.50"
+                      step="0.05"
                       value={activeZoom}
                       onChange={(e) => onSelectZoom(parseFloat(e.target.value))}
                       className="flex-1 h-1.5 rounded-lg bg-neutral-200 appearance-none cursor-pointer"
                       style={{ accentColor: 'var(--accent-color)' }}
                     />
-                    <span className="text-[10px] text-neutral-400 font-bold">Larger</span>
+                    <span className="text-[10px] text-neutral-400 font-bold">150%</span>
+                  </div>
+                  <div className="flex items-center gap-1.5 mt-1">
+                    {[1.0, 1.15, 1.25, 1.50].map((zVal) => (
+                      <button
+                        key={zVal}
+                        type="button"
+                        onClick={() => onSelectZoom(zVal)}
+                        className={`px-2 py-0.5 text-[10px] font-bold rounded border cursor-pointer transition-all ${
+                          Math.abs(activeZoom - zVal) < 0.02
+                            ? 'bg-neutral-900 text-white border-neutral-900'
+                            : 'bg-neutral-50 text-neutral-600 border-neutral-200 hover:bg-neutral-100'
+                        }`}
+                      >
+                        {Math.round(zVal * 100)}%
+                      </button>
+                    ))}
                   </div>
                 </div>
 

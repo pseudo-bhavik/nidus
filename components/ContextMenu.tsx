@@ -1,5 +1,5 @@
-import React, { useEffect, useRef } from 'react';
-import { ExternalLink, EyeOff, Edit3, CheckSquare, Trash2 } from 'lucide-react';
+import React, { useEffect, useRef, useState } from 'react';
+import { ExternalLink, Copy, Check, Edit3, CheckSquare, Trash2 } from 'lucide-react';
 import { Bookmark } from '../lib/types';
 
 interface ContextMenuProps {
@@ -8,7 +8,7 @@ interface ContextMenuProps {
   bookmark: Bookmark;
   onClose: () => void;
   onOpenLink: () => void;
-  onOpenPrivateLink?: () => void;
+  onCopyLink?: () => void;
   onEdit: () => void;
   onToggleComplete: () => void;
   onDelete: () => void;
@@ -20,12 +20,13 @@ export default function ContextMenu({
   bookmark,
   onClose,
   onOpenLink,
-  onOpenPrivateLink,
+  onCopyLink,
   onEdit,
   onToggleComplete,
   onDelete,
 }: ContextMenuProps) {
   const menuRef = useRef<HTMLDivElement>(null);
+  const [copied, setCopied] = useState(false);
 
   // Close context menu on outside click or escape press
   useEffect(() => {
@@ -47,13 +48,24 @@ export default function ContextMenu({
     };
   }, [onClose]);
 
+  const handleCopy = () => {
+    try {
+      navigator.clipboard.writeText(bookmark.url);
+    } catch (e) {}
+    if (onCopyLink) onCopyLink();
+    setCopied(true);
+    setTimeout(() => {
+      onClose();
+    }, 400);
+  };
+
   // Adjust menu position to fit within the viewport
   const adjustPosition = () => {
     let finalX = x;
     let finalY = y;
     
-    const menuWidth = 200;
-    const menuHeight = 190;
+    const menuWidth = 180;
+    const menuHeight = 170;
 
     if (typeof window !== 'undefined') {
       if (x + menuWidth > window.innerWidth) {
@@ -73,7 +85,7 @@ export default function ContextMenu({
     <div
       ref={menuRef}
       style={{ left: pos.left, top: pos.top }}
-      className="fixed z-50 w-48 rounded-md border border-neutral-200/60 bg-white shadow-xl py-1 text-xs text-neutral-800 font-semibold select-none divide-y divide-neutral-100 animate-fade-in"
+      className="fixed z-50 w-44 rounded-md border border-neutral-200/60 bg-white shadow-xl py-1 text-xs text-neutral-800 font-semibold select-none divide-y divide-neutral-100 animate-fade-in"
       onClick={(e) => e.stopPropagation()}
     >
       <div className="py-0.5">
@@ -89,20 +101,20 @@ export default function ContextMenu({
         </button>
 
         <button
-          onClick={() => {
-            if (onOpenPrivateLink) {
-              onOpenPrivateLink();
-            } else {
-              navigator.clipboard.writeText(bookmark.url);
-              window.open(bookmark.url, '_blank');
-            }
-            onClose();
-          }}
-          className="w-full px-3 py-1.5 hover:bg-purple-50 text-purple-950 flex items-center gap-2 text-left cursor-pointer"
-          title="Copies URL & opens in private mode"
+          onClick={handleCopy}
+          className="w-full px-3 py-1.5 hover:bg-neutral-50 flex items-center gap-2 text-left cursor-pointer"
         >
-          <EyeOff className="w-3.5 h-3.5 text-purple-600" />
-          <span>Open in Private Window</span>
+          {copied ? (
+            <>
+              <Check className="w-3.5 h-3.5 text-emerald-600" />
+              <span className="text-emerald-600 font-bold">Link Copied!</span>
+            </>
+          ) : (
+            <>
+              <Copy className="w-3.5 h-3.5 text-neutral-400" />
+              <span>Copy Link</span>
+            </>
+          )}
         </button>
 
         <button
