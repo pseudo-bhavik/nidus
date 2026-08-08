@@ -4,12 +4,12 @@ import React, { useState, useEffect, useCallback, useRef } from 'react';
 import dynamic from 'next/dynamic';
 import {
   PenTool, Plus, Trash2, Edit2, Download, Moon, Sun,
-  Maximize2, Minimize2, Check, PanelLeftOpen
+  Maximize2, Minimize2, Check, PanelLeftOpen, Share2, Upload, Copy, ExternalLink
 } from 'lucide-react';
 import { WhiteboardCanvasDoc } from '../lib/types';
+import { supabase } from '../lib/supabase';
 
 // Dynamically import Excalidraw with SSR completely disabled
-// This prevents any window/document access during server-side rendering
 const ExcalidrawWrapper = dynamic(
   () => import('./ExcalidrawWrapper'),
   {
@@ -52,32 +52,77 @@ export default function WhiteboardCanvas({
   const [renameTitle, setRenameTitle] = useState('');
   const [canvasTheme, setCanvasTheme] = useState<'light' | 'dark'>('light');
   const [isFullScreen, setIsFullScreen] = useState(false);
+  const [copiedLink, setCopiedLink] = useState(false);
 
   // Excalidraw API ref
   const [excalidrawAPI, setExcalidrawAPI] = useState<any>(null);
 
   // Track loaded doc & debounce save
-  const initialDataLoadedRef = useRef<string | null>(null);
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   // Key to force re-mount Excalidraw when switching tabs
   const [excalidrawKey, setExcalidrawKey] = useState(0);
 
-  // 1. Load saved canvas tabs from localStorage
+  // 1. Load saved canvas tabs (First check Supabase, fallback to localStorage)
   useEffect(() => {
-    try {
-      const saved = localStorage.getItem('nidus_whiteboard_docs');
-      if (saved) {
-        const parsed = JSON.parse(saved);
-        if (Array.isArray(parsed) && parsed.length > 0) {
-          setDocs(parsed);
-          setActiveDocId(parsed[0].id);
+    let isMounted = true;
+
+    const loadCanvasData = async () => {
+      // Check if URL has ?canvas=<docId> parameter for direct shared link loading
+      const urlParams = new URLSearchParams(window.location.search);
+      const sharedCanvasId = urlParams.get('canvas');
+
+      // Attempt loading from Supabase first if available
+      try {
+        const { data: dbDocs, error } = await supabase
+          .from('whiteboard_docs')
+          .select('*')
+          .order('updated_at', { ascending: false });
+
+        if (!error && dbDocs && dbDocs.length > 0 && isMounted) {
+          const mappedDocs: WhiteboardCanvasDoc[] = dbDocs.map((d: any) => ({
+            id: d.id,
+            title: d.title || 'Canvas Note',
+            elementsData: d.elements_data || [],
+            appStateData: d.app_state_data || {},
+            created_at: d.created_at,
+            updated_at: d.updated_at,
+          }));
+
+          setDocs(mappedDocs);
+          const targetId = sharedCanvasId && mappedDocs.some(d => d.id === sharedCanvasId)
+            ? sharedCanvasId
+            : mappedDocs[0].id;
+          setActiveDocId(targetId);
           return;
         }
+      } catch (err) {}
+
+      // Fallback to localStorage
+      try {
+        const saved = localStorage.getItem('nidus_whiteboard_docs');
+        if (saved) {
+          const parsed = JSON.parse(saved);
+          if (Array.isArray(parsed) && parsed.length > 0 && isMounted) {
+            setDocs(parsed);
+            const targetId = sharedCanvasId && parsed.some(d => d.id === sharedCanvasId)
+              ? sharedCanvasId
+              : parsed[0].id;
+            setActiveDocId(targetId);
+            return;
+          }
+        }
+      } catch (e) {}
+
+      if (isMounted) {
+        setDocs([DEFAULT_DOC]);
+        setActiveDocId(DEFAULT_DOC.id);
       }
-    } catch (e) {}
-    setDocs([DEFAULT_DOC]);
-    setActiveDocId(DEFAULT_DOC.id);
+    };
+
+    loadCanvasData();
+    return () => { isMounted = false; };
   }, []);
 
   // Lock root document zoom to 1 while Canvas is mounted so mouse pointer matches 1:1
@@ -99,12 +144,24 @@ export default function WhiteboardCanvas({
     return () => clearTimeout(timer);
   }, [isSidebarOpen]);
 
-  // LocalStorage persistence helpers
+  // LocalStorage & Supabase Cloud Persistence helper
   const saveDocsToStorage = (updatedDocs: WhiteboardCanvasDoc[]) => {
     setDocs(updatedDocs);
     try {
       localStorage.setItem('nidus_whiteboard_docs', JSON.stringify(updatedDocs));
     } catch (e) {}
+  };
+
+  const syncDocToSupabase = async (doc: WhiteboardCanvasDoc) => {
+    try {
+      await supabase.from('whiteboard_docs').upsert({
+        id: doc.id,
+        title: doc.title,
+        elements_data: doc.elementsData,
+        app_state_data: doc.appStateData,
+        updated_at: new Date().toISOString(),
+      });
+    } catch (err) {}
   };
 
   const activeDoc = docs.find((d) => d.id === activeDocId) || docs[0] || DEFAULT_DOC;
@@ -125,19 +182,23 @@ export default function WhiteboardCanvas({
     (elements: readonly any[], appState: any) => {
       if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
       saveTimerRef.current = setTimeout(() => {
-        const mutableElements = [...elements]; // Convert readonly to mutable
+        const mutableElements = [...elements];
         const cleanAppState = sanitizeAppState(appState);
+
         setDocs((prev) => {
-          const updated = prev.map((d) =>
-            d.id === activeDocId
-              ? {
-                  ...d,
-                  elementsData: mutableElements,
-                  appStateData: cleanAppState,
-                  updated_at: new Date().toISOString(),
-                }
-              : d
-          );
+          const updated = prev.map((d) => {
+            if (d.id === activeDocId) {
+              const updatedDoc = {
+                ...d,
+                elementsData: mutableElements,
+                appStateData: cleanAppState,
+                updated_at: new Date().toISOString(),
+              };
+              syncDocToSupabase(updatedDoc);
+              return updatedDoc;
+            }
+            return d;
+          });
           try {
             localStorage.setItem('nidus_whiteboard_docs', JSON.stringify(updated));
           } catch (e) {}
@@ -150,7 +211,6 @@ export default function WhiteboardCanvas({
 
   // Document tab actions
   const handleCreateDoc = () => {
-    // Save current doc state before switching
     if (excalidrawAPI) {
       const currentElements = excalidrawAPI.getSceneElements();
       const currentAppState = sanitizeAppState(excalidrawAPI.getAppState());
@@ -175,15 +235,15 @@ export default function WhiteboardCanvas({
     };
     const updated = [newDoc, ...docs];
     saveDocsToStorage(updated);
+    syncDocToSupabase(newDoc);
     setActiveDocId(newDoc.id);
     setExcalidrawAPI(null);
-    setExcalidrawKey((k) => k + 1); // Force remount
+    setExcalidrawKey((k) => k + 1);
   };
 
   const handleSwitchDoc = (docId: string) => {
     if (docId === activeDocId) return;
 
-    // Save current doc state before switching
     if (excalidrawAPI) {
       const currentElements = excalidrawAPI.getSceneElements();
       const currentAppState = sanitizeAppState(excalidrawAPI.getAppState());
@@ -200,16 +260,13 @@ export default function WhiteboardCanvas({
 
     setActiveDocId(docId);
     setExcalidrawAPI(null);
-    setExcalidrawKey((k) => k + 1); // Force remount with new doc's data
+    setExcalidrawKey((k) => k + 1);
   };
 
   const handleDeleteDoc = (id: string, e: React.MouseEvent) => {
     e.stopPropagation();
     if (docs.length <= 1) {
-      // Clear the single remaining doc
-      if (excalidrawAPI) {
-        excalidrawAPI.resetScene();
-      }
+      if (excalidrawAPI) excalidrawAPI.resetScene();
       const updated = docs.map((d) =>
         d.id === id ? { ...d, elementsData: [], updated_at: new Date().toISOString() } : d
       );
@@ -218,6 +275,7 @@ export default function WhiteboardCanvas({
     }
     const updated = docs.filter((d) => d.id !== id);
     saveDocsToStorage(updated);
+    try { supabase.from('whiteboard_docs').delete().eq('id', id); } catch (err) {}
     if (activeDocId === id) {
       setActiveDocId(updated[0].id);
       setExcalidrawAPI(null);
@@ -231,16 +289,26 @@ export default function WhiteboardCanvas({
       setIsRenaming(false);
       return;
     }
-    saveDocsToStorage(
-      docs.map((d) =>
-        d.id === activeDocId
-          ? { ...d, title: renameTitle.trim(), updated_at: new Date().toISOString() }
-          : d
-      )
+    const updated = docs.map((d) =>
+      d.id === activeDocId
+        ? { ...d, title: renameTitle.trim(), updated_at: new Date().toISOString() }
+        : d
     );
+    saveDocsToStorage(updated);
+    const targetDoc = updated.find(d => d.id === activeDocId);
+    if (targetDoc) syncDocToSupabase(targetDoc);
     setIsRenaming(false);
   };
 
+  // Copy Shareable Canvas Link to Clipboard
+  const handleShareLink = () => {
+    const shareUrl = `${window.location.origin}${window.location.pathname}?canvas=${activeDocId}`;
+    navigator.clipboard.writeText(shareUrl);
+    setCopiedLink(true);
+    setTimeout(() => setCopiedLink(false), 2500);
+  };
+
+  // Export PNG Image
   const handleExportPNG = async () => {
     if (!excalidrawAPI) return;
     try {
@@ -261,6 +329,59 @@ export default function WhiteboardCanvas({
     }
   };
 
+  // Export .excalidraw File
+  const handleExportExcalidrawFile = () => {
+    if (!excalidrawAPI) return;
+    const data = {
+      type: 'excalidraw',
+      version: 2,
+      source: 'https://excalidraw.com',
+      elements: excalidrawAPI.getSceneElements(),
+      appState: sanitizeAppState(excalidrawAPI.getAppState()),
+    };
+    const jsonStr = JSON.stringify(data, null, 2);
+    const blob = new Blob([jsonStr], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.download = `${activeDoc.title.toLowerCase().replace(/\s+/g, '-')}.excalidraw`;
+    link.href = url;
+    link.click();
+    URL.revokeObjectURL(url);
+  };
+
+  // Import .excalidraw File from disk
+  const handleImportFile = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      try {
+        const json = JSON.parse(event.target?.result as string);
+        if (json.elements && Array.isArray(json.elements)) {
+          const importedDoc: WhiteboardCanvasDoc = {
+            id: 'doc-' + Date.now().toString(36),
+            title: file.name.replace(/\.excalidraw$/i, '') || 'Imported Canvas',
+            elementsData: json.elements,
+            appStateData: json.appState || {},
+            created_at: new Date().toISOString(),
+            updated_at: new Date().toISOString(),
+          };
+          const updated = [importedDoc, ...docs];
+          saveDocsToStorage(updated);
+          syncDocToSupabase(importedDoc);
+          setActiveDocId(importedDoc.id);
+          setExcalidrawAPI(null);
+          setExcalidrawKey((k) => k + 1);
+        }
+      } catch (err) {
+        alert('Invalid Excalidraw file format');
+      }
+    };
+    reader.readAsText(file);
+    e.target.value = '';
+  };
+
   const handleToggleTheme = () => {
     const newTheme = canvasTheme === 'light' ? 'dark' : 'light';
     setCanvasTheme(newTheme);
@@ -277,9 +398,17 @@ export default function WhiteboardCanvas({
         isFullScreen ? 'fixed inset-0 z-50' : ''
       }`}
     >
+      <input
+        ref={fileInputRef}
+        type="file"
+        accept=".excalidraw,.json"
+        onChange={handleImportFile}
+        className="hidden"
+      />
+
       {/* Top Navigation & Multi-Tab Header Bar */}
       <div className="h-10 px-3 bg-white/95 border-b border-neutral-200 flex items-center justify-between shrink-0 text-xs z-30">
-        <div className="flex items-center gap-2 overflow-x-auto py-1 max-w-[60%] no-scrollbar">
+        <div className="flex items-center gap-2 overflow-x-auto py-1 max-w-[55%] no-scrollbar">
           {!isSidebarOpen && onOpenSidebar && (
             <button
               onClick={onOpenSidebar}
@@ -366,6 +495,28 @@ export default function WhiteboardCanvas({
 
           <div className="h-4 w-px bg-neutral-200 mx-0.5" />
 
+          {/* Shareable Link Button */}
+          <button
+            onClick={handleShareLink}
+            className={`px-2 py-1 rounded flex items-center gap-1 font-semibold text-[11px] cursor-pointer transition-all ${
+              copiedLink ? 'bg-emerald-50 text-emerald-600 border border-emerald-200' : 'bg-indigo-50 text-indigo-600 hover:bg-indigo-100'
+            }`}
+            title="Copy Shareable Link for Other Devices"
+          >
+            {copiedLink ? <Check className="w-3 h-3 text-emerald-600" /> : <Share2 className="w-3 h-3" />}
+            <span>{copiedLink ? 'Link Copied!' : 'Share'}</span>
+          </button>
+
+          {/* Import File Button */}
+          <button
+            onClick={() => fileInputRef.current?.click()}
+            className="p-1.5 text-neutral-600 hover:text-neutral-900 hover:bg-neutral-100 rounded-md cursor-pointer"
+            title="Import .excalidraw File"
+          >
+            <Upload className="w-3.5 h-3.5" />
+          </button>
+
+          {/* Export PNG Image */}
           <button
             onClick={handleExportPNG}
             className="p-1.5 text-neutral-600 hover:text-neutral-900 hover:bg-neutral-100 rounded-md cursor-pointer"
@@ -373,6 +524,16 @@ export default function WhiteboardCanvas({
           >
             <Download className="w-3.5 h-3.5" />
           </button>
+
+          {/* Export .excalidraw File */}
+          <button
+            onClick={handleExportExcalidrawFile}
+            className="p-1.5 text-neutral-600 hover:text-neutral-900 hover:bg-neutral-100 rounded-md cursor-pointer text-[10px] font-bold"
+            title="Export .excalidraw JSON"
+          >
+            JSON
+          </button>
+
           <button
             onClick={handleToggleTheme}
             className="p-1.5 text-neutral-600 hover:text-neutral-900 hover:bg-neutral-100 rounded-md cursor-pointer"
@@ -384,6 +545,7 @@ export default function WhiteboardCanvas({
               <Sun className="w-3.5 h-3.5" />
             )}
           </button>
+
           <button
             onClick={() => setIsFullScreen(!isFullScreen)}
             className="p-1.5 text-neutral-600 hover:text-neutral-900 hover:bg-neutral-100 rounded-md cursor-pointer"
