@@ -173,31 +173,23 @@ export default function WhiteboardCanvas({
     return () => { isMounted = false; };
   }, []);
 
-  // Lock root document zoom to 1 while Canvas is mounted so mouse pointer matches 1:1
+  // Trigger layout refresh when Whiteboard Canvas mounts to ensure layout matches set Application Zoom
   useEffect(() => {
-    const lockZoom = () => {
-      if (typeof document !== 'undefined' && document.documentElement.style.zoom !== '1') {
-        document.documentElement.style.zoom = '1';
-        window.dispatchEvent(new Event('resize'));
+    const triggerRefresh = () => {
+      window.dispatchEvent(new Event('resize'));
+      if (excalidrawAPI && typeof excalidrawAPI.refresh === 'function') {
+        excalidrawAPI.refresh();
       }
     };
-    lockZoom();
-    const interval = setInterval(lockZoom, 150);
 
-    const timer1 = setTimeout(() => window.dispatchEvent(new Event('resize')), 100);
-    const timer2 = setTimeout(() => window.dispatchEvent(new Event('resize')), 300);
+    const timer1 = setTimeout(triggerRefresh, 100);
+    const timer2 = setTimeout(triggerRefresh, 300);
 
     return () => {
-      clearInterval(interval);
       clearTimeout(timer1);
       clearTimeout(timer2);
-      try {
-        const storedZoom = localStorage.getItem('antigravity_zoom') || '1';
-        document.documentElement.style.zoom = storedZoom;
-        window.dispatchEvent(new Event('resize'));
-      } catch (e) {}
     };
-  }, []);
+  }, [excalidrawAPI]);
 
   // Trigger window resize when sidebar state changes to fix pointer alignment instantly
   useEffect(() => {

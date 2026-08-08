@@ -258,16 +258,14 @@ export default function Dashboard({ initialView }: { initialView?: ViewType } = 
 
   const applyZoom = useCallback((zoom: number) => {
     if (typeof document !== 'undefined') {
-      // Lock zoom = 1 for whiteboard canvas, restore user's preferred zoom level everywhere else
-      const targetZoom = currentView === 'canvas' ? '1' : zoom.toString();
-      document.documentElement.style.zoom = targetZoom;
+      document.documentElement.style.zoom = zoom.toString();
     }
-  }, [currentView]);
+  }, []);
 
-  // Re-apply zoom whenever currentView or activeZoom state changes
+  // Re-apply zoom whenever activeZoom state changes
   useEffect(() => {
     applyZoom(activeZoom);
-  }, [currentView, activeZoom, applyZoom]);
+  }, [activeZoom, applyZoom]);
 
   const handleSelectTheme = (theme: string) => {
     setActiveTheme(theme);
