@@ -191,6 +191,11 @@ export default function WhiteboardCanvas({
       clearInterval(interval);
       clearTimeout(timer1);
       clearTimeout(timer2);
+      try {
+        const storedZoom = localStorage.getItem('antigravity_zoom') || '1';
+        document.documentElement.style.zoom = storedZoom;
+        window.dispatchEvent(new Event('resize'));
+      } catch (e) {}
     };
   }, []);
 

@@ -237,7 +237,6 @@ export default function Dashboard({ initialView }: { initialView?: ViewType } = 
     const storedZoom = localStorage.getItem('antigravity_zoom') || '1';
     const zoomVal = parseFloat(storedZoom);
     setActiveZoom(zoomVal);
-    applyZoom(zoomVal);
   }, []);
 
   const applyTheme = (theme: string) => {
@@ -257,12 +256,18 @@ export default function Dashboard({ initialView }: { initialView?: ViewType } = 
     }
   };
 
-  const applyZoom = (zoom: number) => {
+  const applyZoom = useCallback((zoom: number) => {
     if (typeof document !== 'undefined') {
-      // Force zoom = 1 for canvas view to preserve 1:1 mouse pointer precision
-      document.documentElement.style.zoom = currentView === 'canvas' ? '1' : zoom.toString();
+      // Lock zoom = 1 for whiteboard canvas, restore user's preferred zoom level everywhere else
+      const targetZoom = currentView === 'canvas' ? '1' : zoom.toString();
+      document.documentElement.style.zoom = targetZoom;
     }
-  };
+  }, [currentView]);
+
+  // Re-apply zoom whenever currentView or activeZoom state changes
+  useEffect(() => {
+    applyZoom(activeZoom);
+  }, [currentView, activeZoom, applyZoom]);
 
   const handleSelectTheme = (theme: string) => {
     setActiveTheme(theme);
