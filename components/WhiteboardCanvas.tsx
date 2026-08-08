@@ -90,19 +90,31 @@ export default function WhiteboardCanvas({
 
   const activeDoc = docs.find((d) => d.id === activeDocId) || docs[0] || DEFAULT_DOC;
 
+  const sanitizeAppState = (appState: any) => {
+    if (!appState) return {};
+    return {
+      theme: appState.theme,
+      viewBackgroundColor: appState.viewBackgroundColor,
+      zoom: appState.zoom,
+      scrollX: appState.scrollX,
+      scrollY: appState.scrollY,
+    };
+  };
+
   // Debounced save: called by Excalidraw's onChange
   const handleExcalidrawChange = useCallback(
     (elements: readonly any[], appState: any) => {
       if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
       saveTimerRef.current = setTimeout(() => {
         const mutableElements = [...elements]; // Convert readonly to mutable
+        const cleanAppState = sanitizeAppState(appState);
         setDocs((prev) => {
           const updated = prev.map((d) =>
             d.id === activeDocId
               ? {
                   ...d,
                   elementsData: mutableElements,
-                  appStateData: appState,
+                  appStateData: cleanAppState,
                   updated_at: new Date().toISOString(),
                 }
               : d
@@ -122,7 +134,7 @@ export default function WhiteboardCanvas({
     // Save current doc state before switching
     if (excalidrawAPI) {
       const currentElements = excalidrawAPI.getSceneElements();
-      const currentAppState = excalidrawAPI.getAppState();
+      const currentAppState = sanitizeAppState(excalidrawAPI.getAppState());
       setDocs((prev) => {
         const updated = prev.map((d) =>
           d.id === activeDocId
@@ -155,7 +167,7 @@ export default function WhiteboardCanvas({
     // Save current doc state before switching
     if (excalidrawAPI) {
       const currentElements = excalidrawAPI.getSceneElements();
-      const currentAppState = excalidrawAPI.getAppState();
+      const currentAppState = sanitizeAppState(excalidrawAPI.getAppState());
       setDocs((prev) => {
         const updated = prev.map((d) =>
           d.id === activeDocId

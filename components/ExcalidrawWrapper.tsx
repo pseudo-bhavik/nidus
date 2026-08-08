@@ -1,7 +1,8 @@
 'use client';
 
-import React, { useCallback, useRef } from 'react';
+import React from 'react';
 import { Excalidraw, exportToBlob } from '@excalidraw/excalidraw';
+import '@excalidraw/excalidraw/index.css';
 
 interface ExcalidrawWrapperProps {
   initialElements: any[];
@@ -19,23 +20,25 @@ export default function ExcalidrawWrapper({
   onChange,
 }: ExcalidrawWrapperProps) {
   return (
-    <Excalidraw
-      excalidrawAPI={(api: any) => onApiReady(api)}
-      initialData={{
-        elements: initialElements,
-        appState: initialAppState,
-        scrollToContent: true,
-      }}
-      onChange={onChange}
-      theme={theme}
-      UIOptions={{
-        canvasActions: {
-          loadScene: false,
-          saveToActiveFile: false,
-          toggleTheme: false,
-        },
-      }}
-    />
+    <div className="w-full h-full relative">
+      <Excalidraw
+        excalidrawAPI={(api: any) => onApiReady(api)}
+        initialData={{
+          elements: initialElements,
+          appState: initialAppState,
+          scrollToContent: true,
+        }}
+        onChange={onChange}
+        theme={theme}
+        UIOptions={{
+          canvasActions: {
+            loadScene: false,
+            saveToActiveFile: false,
+            toggleTheme: false,
+          },
+        }}
+      />
+    </div>
   );
 }
 
