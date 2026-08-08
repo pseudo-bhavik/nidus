@@ -4,7 +4,7 @@ import React, { useState, useEffect, useCallback, useRef } from 'react';
 import dynamic from 'next/dynamic';
 import {
   PenTool, Plus, Trash2, Edit2, Download, Moon, Sun,
-  Maximize2, Minimize2, Check, PanelLeftOpen, Share2, Upload, GripVertical, Lock
+  Maximize2, Minimize2, Check, PanelLeftOpen, Share2, Upload, GripVertical, Lock, AlertTriangle
 } from 'lucide-react';
 import { WhiteboardCanvasDoc } from '../lib/types';
 import { supabase } from '../lib/supabase';
@@ -55,6 +55,7 @@ export default function WhiteboardCanvas({
   const [isFullScreen, setIsFullScreen] = useState(false);
   const [copiedLink, setCopiedLink] = useState(false);
   const [isSharedMode, setIsSharedMode] = useState(false);
+  const [docToDelete, setDocToDelete] = useState<WhiteboardCanvasDoc | null>(null);
 
   // Drag & Drop Tab Reordering State
   const [draggedTabIdx, setDraggedTabIdx] = useState<number | null>(null);
@@ -334,24 +335,31 @@ export default function WhiteboardCanvas({
     setExcalidrawKey((k) => k + 1);
   };
 
-  const handleDeleteDoc = (id: string, e: React.MouseEvent) => {
+  const promptDeleteDoc = (doc: WhiteboardCanvasDoc, e: React.MouseEvent) => {
     e.stopPropagation();
+    setDocToDelete(doc);
+  };
+
+  const confirmDeleteDoc = () => {
+    if (!docToDelete) return;
+    const id = docToDelete.id;
     if (docs.length <= 1) {
       if (excalidrawAPI) excalidrawAPI.resetScene();
       const updated = docs.map((d) =>
         d.id === id ? { ...d, elementsData: [], updated_at: new Date().toISOString() } : d
       );
       saveDocsToStorage(updated);
-      return;
+    } else {
+      const updated = docs.filter((d) => d.id !== id);
+      saveDocsToStorage(updated);
+      try { supabase.from('whiteboard_docs').delete().eq('id', id); } catch (err) {}
+      if (activeDocId === id) {
+        setActiveDocId(updated[0].id);
+        setExcalidrawAPI(null);
+        setExcalidrawKey((k) => k + 1);
+      }
     }
-    const updated = docs.filter((d) => d.id !== id);
-    saveDocsToStorage(updated);
-    try { supabase.from('whiteboard_docs').delete().eq('id', id); } catch (err) {}
-    if (activeDocId === id) {
-      setActiveDocId(updated[0].id);
-      setExcalidrawAPI(null);
-      setExcalidrawKey((k) => k + 1);
-    }
+    setDocToDelete(null);
   };
 
   // Drag & Drop Handlers for Reordering Canvas Tabs
@@ -578,7 +586,7 @@ export default function WhiteboardCanvas({
                       <span className="max-w-[70px] sm:max-w-[100px] truncate">{doc.title}</span>
                       {isSelected && docs.length > 1 && (
                         <span
-                          onClick={(e) => handleDeleteDoc(doc.id, e)}
+                          onClick={(e) => promptDeleteDoc(doc, e)}
                           className="p-0.5 hover:text-red-600 rounded text-neutral-400 cursor-pointer"
                           title="Close Canvas"
                         >
@@ -723,6 +731,37 @@ export default function WhiteboardCanvas({
           </div>
         )}
       </div>
+
+      {/* Small In-App Canvas Deletion Confirmation Modal */}
+      {docToDelete && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/35 backdrop-blur-xs animate-fade-in">
+          <div className="bg-white border border-neutral-300 shadow-2xl p-4 sm:p-5 w-full max-w-xs text-neutral-800 animate-scale-in">
+            <div className="flex items-center gap-2 text-red-600 mb-2">
+              <AlertTriangle className="w-4 h-4 shrink-0" />
+              <h3 className="font-extrabold text-xs sm:text-sm">Delete Canvas?</h3>
+            </div>
+            <p className="text-xs text-neutral-600 mb-4 leading-relaxed">
+              Are you sure you want to delete <strong className="text-neutral-900">"{docToDelete.title}"</strong>?
+            </p>
+            <div className="flex items-center justify-end gap-2 text-xs font-bold">
+              <button
+                type="button"
+                onClick={() => setDocToDelete(null)}
+                className="px-3 py-1.5 bg-neutral-100 hover:bg-neutral-200 text-neutral-700 rounded-none cursor-pointer transition-all"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={confirmDeleteDoc}
+                className="px-3 py-1.5 bg-red-600 hover:bg-red-700 text-white rounded-none cursor-pointer transition-all"
+              >
+                Delete
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

@@ -1299,6 +1299,11 @@ export default function Dashboard({ initialView }: { initialView?: ViewType } = 
           bookmark={contextMenu.bookmark}
           onClose={() => setContextMenu(prev => ({ ...prev, visible: false }))}
           onOpenLink={() => window.open(contextMenu.bookmark!.url, '_blank')}
+          onOpenPrivateLink={() => {
+            const url = contextMenu.bookmark!.url;
+            try { navigator.clipboard.writeText(url); } catch (e) {}
+            window.open(url, '_blank', 'incognito=yes,private=yes');
+          }}
           onEdit={() => {
             setEditBookmark(contextMenu.bookmark);
             setIsEditModalOpen(true);

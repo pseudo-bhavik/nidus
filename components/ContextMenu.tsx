@@ -1,5 +1,5 @@
 import React, { useEffect, useRef } from 'react';
-import { ExternalLink, Edit3, CheckSquare, Trash2, RotateCcw } from 'lucide-react';
+import { ExternalLink, EyeOff, Edit3, CheckSquare, Trash2 } from 'lucide-react';
 import { Bookmark } from '../lib/types';
 
 interface ContextMenuProps {
@@ -8,6 +8,7 @@ interface ContextMenuProps {
   bookmark: Bookmark;
   onClose: () => void;
   onOpenLink: () => void;
+  onOpenPrivateLink?: () => void;
   onEdit: () => void;
   onToggleComplete: () => void;
   onDelete: () => void;
@@ -19,6 +20,7 @@ export default function ContextMenu({
   bookmark,
   onClose,
   onOpenLink,
+  onOpenPrivateLink,
   onEdit,
   onToggleComplete,
   onDelete,
@@ -50,8 +52,8 @@ export default function ContextMenu({
     let finalX = x;
     let finalY = y;
     
-    const menuWidth = 180;
-    const menuHeight = 160;
+    const menuWidth = 200;
+    const menuHeight = 190;
 
     if (typeof window !== 'undefined') {
       if (x + menuWidth > window.innerWidth) {
@@ -71,7 +73,7 @@ export default function ContextMenu({
     <div
       ref={menuRef}
       style={{ left: pos.left, top: pos.top }}
-      className="fixed z-50 w-44 rounded-md border border-neutral-200/60 bg-white shadow-xl py-1 text-xs text-neutral-800 font-semibold select-none divide-y divide-neutral-100"
+      className="fixed z-50 w-48 rounded-md border border-neutral-200/60 bg-white shadow-xl py-1 text-xs text-neutral-800 font-semibold select-none divide-y divide-neutral-100 animate-fade-in"
       onClick={(e) => e.stopPropagation()}
     >
       <div className="py-0.5">
@@ -85,6 +87,24 @@ export default function ContextMenu({
           <ExternalLink className="w-3.5 h-3.5 text-neutral-400" />
           <span>Open Link</span>
         </button>
+
+        <button
+          onClick={() => {
+            if (onOpenPrivateLink) {
+              onOpenPrivateLink();
+            } else {
+              navigator.clipboard.writeText(bookmark.url);
+              window.open(bookmark.url, '_blank');
+            }
+            onClose();
+          }}
+          className="w-full px-3 py-1.5 hover:bg-purple-50 text-purple-950 flex items-center gap-2 text-left cursor-pointer"
+          title="Copies URL & opens in private mode"
+        >
+          <EyeOff className="w-3.5 h-3.5 text-purple-600" />
+          <span>Open in Private Window</span>
+        </button>
+
         <button
           onClick={() => {
             onEdit();
