@@ -1,6 +1,6 @@
 'use client';
 
-import React from 'react';
+import React, { useEffect } from 'react';
 import { Excalidraw, exportToBlob } from '@excalidraw/excalidraw';
 import '@excalidraw/excalidraw/index.css';
 
@@ -19,8 +19,18 @@ export default function ExcalidrawWrapper({
   onApiReady,
   onChange,
 }: ExcalidrawWrapperProps) {
+  // Dispatch resize event after layout settles to guarantee 1:1 canvas mouse alignment
+  useEffect(() => {
+    const timer1 = setTimeout(() => window.dispatchEvent(new Event('resize')), 100);
+    const timer2 = setTimeout(() => window.dispatchEvent(new Event('resize')), 400);
+    return () => {
+      clearTimeout(timer1);
+      clearTimeout(timer2);
+    };
+  }, []);
+
   return (
-    <div className="w-full h-full relative">
+    <div className="absolute inset-0 w-full h-full overflow-hidden">
       <Excalidraw
         excalidrawAPI={(api: any) => onApiReady(api)}
         initialData={{

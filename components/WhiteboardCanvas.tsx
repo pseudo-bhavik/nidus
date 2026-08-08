@@ -80,6 +80,14 @@ export default function WhiteboardCanvas({
     setActiveDocId(DEFAULT_DOC.id);
   }, []);
 
+  // Trigger window resize when sidebar state changes to fix pointer alignment instantly
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      window.dispatchEvent(new Event('resize'));
+    }, 250);
+    return () => clearTimeout(timer);
+  }, [isSidebarOpen]);
+
   // LocalStorage persistence helpers
   const saveDocsToStorage = (updatedDocs: WhiteboardCanvasDoc[]) => {
     setDocs(updatedDocs);
