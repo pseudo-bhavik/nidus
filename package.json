@@ -9,6 +9,7 @@
     "lint": "eslint"
   },
   "dependencies": {
+    "@excalidraw/excalidraw": "^0.18.1",
     "@supabase/supabase-js": "^2.110.1",
     "link-preview-js": "^4.0.4",
     "lucide-react": "^1.23.0",
