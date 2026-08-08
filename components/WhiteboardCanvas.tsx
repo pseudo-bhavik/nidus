@@ -106,6 +106,12 @@ export default function WhiteboardCanvas({
       }
 
       // NORMAL VIEW: Load authenticated user's own canvases
+      let savedOrderIds: string[] = [];
+      try {
+        const orderRaw = localStorage.getItem('nidus_whiteboard_docs_order');
+        if (orderRaw) savedOrderIds = JSON.parse(orderRaw);
+      } catch (e) {}
+
       try {
         const { data: { user } } = await supabase.auth.getUser();
         let query = supabase.from('whiteboard_docs').select('*');
@@ -120,9 +126,19 @@ export default function WhiteboardCanvas({
             title: d.title || 'Canvas Note',
             elementsData: d.elements_data || [],
             appStateData: d.app_state_data || {},
+            position: typeof d.app_state_data?.position === 'number' ? d.app_state_data.position : undefined,
             created_at: d.created_at,
             updated_at: d.updated_at,
           }));
+
+          // Sort mappedDocs strictly by position / saved order sequence
+          mappedDocs.sort((a, b) => {
+            const idxA = savedOrderIds.indexOf(a.id);
+            const idxB = savedOrderIds.indexOf(b.id);
+            const posA = typeof a.position === 'number' ? a.position : (idxA !== -1 ? idxA : 999);
+            const posB = typeof b.position === 'number' ? b.position : (idxB !== -1 ? idxB : 999);
+            return posA - posB;
+          });
 
           setDocs(mappedDocs);
           setActiveDocId(mappedDocs[0].id);
@@ -190,9 +206,16 @@ export default function WhiteboardCanvas({
 
   // LocalStorage & Supabase Cloud Persistence helper
   const saveDocsToStorage = (updatedDocs: WhiteboardCanvasDoc[]) => {
-    setDocs(updatedDocs);
+    const indexedDocs = updatedDocs.map((doc, idx) => ({
+      ...doc,
+      position: idx,
+      appStateData: { ...(doc.appStateData || {}), position: idx },
+    }));
+    setDocs(indexedDocs);
     try {
-      localStorage.setItem('nidus_whiteboard_docs', JSON.stringify(updatedDocs));
+      localStorage.setItem('nidus_whiteboard_docs', JSON.stringify(indexedDocs));
+      const orderIds = indexedDocs.map((d) => d.id);
+      localStorage.setItem('nidus_whiteboard_docs_order', JSON.stringify(orderIds));
     } catch (e) {}
   };
 

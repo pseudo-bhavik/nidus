@@ -22,6 +22,7 @@ export interface StickyNote {
   content: string;
   color: 'yellow' | 'green' | 'blue' | 'pink' | 'purple' | 'orange' | 'dark';
   is_pinned?: boolean;
+  position?: number;
   created_at: string;
   updated_at: string;
 }
@@ -31,6 +32,7 @@ export interface WhiteboardCanvasDoc {
   title: string;
   elementsData: any[];
   appStateData?: any;
+  position?: number;
   created_at: string;
   updated_at: string;
 }

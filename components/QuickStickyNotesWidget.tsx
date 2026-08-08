@@ -110,6 +110,12 @@ export default function QuickStickyNotesWidget({ onOpenFullNotes }: QuickStickyN
     let isMounted = true;
 
     const loadNotesData = async () => {
+      let savedOrderIds: string[] = [];
+      try {
+        const orderRaw = localStorage.getItem('nidus_sticky_notes_order');
+        if (orderRaw) savedOrderIds = JSON.parse(orderRaw);
+      } catch (e) {}
+
       try {
         const { data: { user } } = await supabase.auth.getUser();
         let query = supabase.from('sticky_notes').select('*');
@@ -125,9 +131,20 @@ export default function QuickStickyNotesWidget({ onOpenFullNotes }: QuickStickyN
             content: n.content || '',
             color: n.color || 'yellow',
             is_pinned: n.is_pinned ?? false,
+            position: typeof n.position === 'number' ? n.position : undefined,
             created_at: n.created_at,
             updated_at: n.updated_at,
           }));
+
+          // Preserve exact drag & drop sequence
+          mapped.sort((a, b) => {
+            const idxA = savedOrderIds.indexOf(a.id);
+            const idxB = savedOrderIds.indexOf(b.id);
+            const posA = typeof a.position === 'number' ? a.position : (idxA !== -1 ? idxA : 999);
+            const posB = typeof b.position === 'number' ? b.position : (idxB !== -1 ? idxB : 999);
+            return posA - posB;
+          });
+
           setNotes(mapped);
           const pinned = mapped.filter((n) => n.is_pinned);
           setActiveTabId(pinned.length > 0 ? pinned[0].id : mapped[0].id);
@@ -161,9 +178,12 @@ export default function QuickStickyNotesWidget({ onOpenFullNotes }: QuickStickyN
 
   // Save notes locally and sync to Supabase cloud
   const saveNotes = (updated: StickyNote[]) => {
-    setNotes(updated);
+    const indexed = updated.map((n, idx) => ({ ...n, position: idx }));
+    setNotes(indexed);
     try {
-      localStorage.setItem('nidus_sticky_notes', JSON.stringify(updated));
+      localStorage.setItem('nidus_sticky_notes', JSON.stringify(indexed));
+      const orderIds = indexed.map((n) => n.id);
+      localStorage.setItem('nidus_sticky_notes_order', JSON.stringify(orderIds));
     } catch (e) {}
 
     if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
