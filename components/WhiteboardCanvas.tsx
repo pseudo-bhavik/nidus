@@ -158,12 +158,22 @@ export default function WhiteboardCanvas({
 
   // Lock root document zoom to 1 while Canvas is mounted so mouse pointer matches 1:1
   useEffect(() => {
-    const prevZoom = document.documentElement.style.zoom;
-    document.documentElement.style.zoom = '1';
-    window.dispatchEvent(new Event('resize'));
+    const lockZoom = () => {
+      if (typeof document !== 'undefined' && document.documentElement.style.zoom !== '1') {
+        document.documentElement.style.zoom = '1';
+        window.dispatchEvent(new Event('resize'));
+      }
+    };
+    lockZoom();
+    const interval = setInterval(lockZoom, 150);
+
+    const timer1 = setTimeout(() => window.dispatchEvent(new Event('resize')), 100);
+    const timer2 = setTimeout(() => window.dispatchEvent(new Event('resize')), 300);
+
     return () => {
-      document.documentElement.style.zoom = prevZoom || '';
-      window.dispatchEvent(new Event('resize'));
+      clearInterval(interval);
+      clearTimeout(timer1);
+      clearTimeout(timer2);
     };
   }, []);
 
@@ -171,9 +181,12 @@ export default function WhiteboardCanvas({
   useEffect(() => {
     const timer = setTimeout(() => {
       window.dispatchEvent(new Event('resize'));
+      if (excalidrawAPI && typeof excalidrawAPI.refresh === 'function') {
+        excalidrawAPI.refresh();
+      }
     }, 250);
     return () => clearTimeout(timer);
-  }, [isSidebarOpen]);
+  }, [isSidebarOpen, excalidrawAPI]);
 
   // LocalStorage & Supabase Cloud Persistence helper
   const saveDocsToStorage = (updatedDocs: WhiteboardCanvasDoc[]) => {

@@ -233,7 +233,7 @@ export default function Dashboard({ initialView }: { initialView?: ViewType } = 
     const storedDensity = localStorage.getItem('antigravity_density') || 'cozy';
     setActiveDensity(storedDensity);
 
-    const storedZoom = localStorage.getItem('antigravity_zoom') || '1.04';
+    const storedZoom = localStorage.getItem('antigravity_zoom') || '1';
     const zoomVal = parseFloat(storedZoom);
     setActiveZoom(zoomVal);
     applyZoom(zoomVal);
@@ -258,7 +258,8 @@ export default function Dashboard({ initialView }: { initialView?: ViewType } = 
 
   const applyZoom = (zoom: number) => {
     if (typeof document !== 'undefined') {
-      document.documentElement.style.zoom = zoom.toString();
+      // Force zoom = 1 for canvas view to preserve 1:1 mouse pointer precision
+      document.documentElement.style.zoom = currentView === 'canvas' ? '1' : zoom.toString();
     }
   };
 
