@@ -1166,6 +1166,7 @@ export default function Dashboard() {
             onToggleHighPriority={() => setHighPriorityOnly(!highPriorityOnly)}
             activeDensity={activeDensity}
             activeHighlightStyle={activeHighlightStyle}
+            onOpenStickyNotes={() => setCurrentView('sticky-notes')}
           />
         )}
       </div>

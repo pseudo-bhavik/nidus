@@ -92,11 +92,73 @@ export default function QuickStickyNotesWidget({ onOpenFullNotes }: QuickStickyN
   const [colorPickerNoteId, setColorPickerNoteId] = useState<string | null>(null);
   const [copiedId, setCopiedId] = useState<string | null>(null);
 
-  // Drag & Drop reordering state
+  // Widget Free-form Screen Position State & Dragging
+  const [widgetPos, setWidgetPos] = useState<{ x: number; y: number } | null>(null);
+  const isDraggingWidgetRef = useRef(false);
+  const dragOffsetRef = useRef<{ x: number; y: number }>({ x: 0, y: 0 });
+
+  // Drag & Drop tab reordering state
   const [draggedTabIdx, setDraggedTabIdx] = useState<number | null>(null);
   const [dragOverTabIdx, setDragOverTabIdx] = useState<number | null>(null);
 
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Load saved widget position from localStorage
+  useEffect(() => {
+    try {
+      const savedPos = localStorage.getItem('nidus_sticky_widget_pos');
+      if (savedPos) {
+        const parsed = JSON.parse(savedPos);
+        if (parsed && typeof parsed.x === 'number' && typeof parsed.y === 'number') {
+          setWidgetPos(parsed);
+        }
+      }
+    } catch (e) {}
+  }, []);
+
+  // Handle widget free-form screen dragging
+  const handleStartWidgetDrag = (e: React.MouseEvent | React.TouchEvent) => {
+    isDraggingWidgetRef.current = true;
+    const clientX = 'touches' in e ? e.touches[0].clientX : e.clientX;
+    const clientY = 'touches' in e ? e.touches[0].clientY : e.clientY;
+
+    const widgetEl = (e.currentTarget as HTMLElement).closest('.floating-sticky-widget');
+    if (widgetEl) {
+      const rect = widgetEl.getBoundingClientRect();
+      dragOffsetRef.current = {
+        x: clientX - rect.left,
+        y: clientY - rect.top,
+      };
+    }
+
+    const handleMove = (moveEvt: MouseEvent | TouchEvent) => {
+      if (!isDraggingWidgetRef.current) return;
+      const moveX = 'touches' in moveEvt ? moveEvt.touches[0].clientX : moveEvt.clientX;
+      const moveY = 'touches' in moveEvt ? moveEvt.touches[0].clientY : moveEvt.clientY;
+
+      const newX = Math.max(10, Math.min(window.innerWidth - 300, moveX - dragOffsetRef.current.x));
+      const newY = Math.max(10, Math.min(window.innerHeight - 150, moveY - dragOffsetRef.current.y));
+
+      const newPos = { x: newX, y: newY };
+      setWidgetPos(newPos);
+      try {
+        localStorage.setItem('nidus_sticky_widget_pos', JSON.stringify(newPos));
+      } catch (err) {}
+    };
+
+    const handleEnd = () => {
+      isDraggingWidgetRef.current = false;
+      window.removeEventListener('mousemove', handleMove);
+      window.removeEventListener('mouseup', handleEnd);
+      window.removeEventListener('touchmove', handleMove);
+      window.removeEventListener('touchend', handleEnd);
+    };
+
+    window.addEventListener('mousemove', handleMove);
+    window.addEventListener('mouseup', handleEnd);
+    window.addEventListener('touchmove', handleMove);
+    window.addEventListener('touchend', handleEnd);
+  };
 
   // Load notes from Supabase cloud first (with localStorage fallback)
   useEffect(() => {
@@ -160,8 +222,10 @@ export default function QuickStickyNotesWidget({ onOpenFullNotes }: QuickStickyN
     if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
     saveTimerRef.current = setTimeout(async () => {
       try {
+        const { data: { user } } = await supabase.auth.getUser();
         const upsertPayload = updated.map((n) => ({
           id: n.id,
+          user_id: user?.id || null,
           title: n.title,
           content: n.content,
           color: n.color,
@@ -270,24 +334,46 @@ export default function QuickStickyNotesWidget({ onOpenFullNotes }: QuickStickyN
   const currentTheme = activeNote ? (COLOR_STYLES[activeNote.color] || COLOR_STYLES.yellow) : COLOR_STYLES.yellow;
 
   return (
-    <div className="fixed bottom-4 right-4 z-40 select-none flex flex-col items-end animate-fade-in pointer-events-auto">
+    <div
+      className={`fixed z-40 select-none flex flex-col items-end animate-fade-in pointer-events-auto floating-sticky-widget ${
+        widgetPos ? '' : 'bottom-4 right-4'
+      }`}
+      style={
+        widgetPos
+          ? { left: `${widgetPos.x}px`, top: `${widgetPos.y}px`, right: 'auto', bottom: 'auto' }
+          : undefined
+      }
+    >
       {/* Minimized Floating Badge */}
       {isMinimized ? (
-        <button
-          onClick={() => setIsMinimized(false)}
-          className="px-3 py-2 bg-neutral-900 text-white rounded-full shadow-lg flex items-center gap-2 text-xs font-bold hover:bg-neutral-800 cursor-pointer transition-all duration-200 border border-neutral-700"
-          title="Expand Pinned Sticky Notes"
-        >
-          <StickyNoteIcon className="w-4 h-4 text-amber-400" />
-          <span>Pinned Notes ({displayNotes.length})</span>
-          <ChevronUp className="w-3.5 h-3.5 text-neutral-400" />
-        </button>
+        <div className="flex items-center gap-1.5 bg-neutral-900 text-white rounded-full shadow-lg p-1 border border-neutral-700">
+          <GripVertical
+            onMouseDown={handleStartWidgetDrag}
+            onTouchStart={handleStartWidgetDrag}
+            className="w-3.5 h-3.5 text-neutral-400 cursor-grab active:cursor-grabbing hover:text-white shrink-0 ml-1"
+          />
+          <button
+            onClick={() => setIsMinimized(false)}
+            className="px-2 py-1 flex items-center gap-2 text-xs font-bold hover:bg-neutral-800 rounded-full cursor-pointer transition-all duration-200"
+            title="Expand Pinned Sticky Notes"
+          >
+            <StickyNoteIcon className="w-4 h-4 text-amber-400" />
+            <span>Pinned Notes ({displayNotes.length})</span>
+            <ChevronUp className="w-3.5 h-3.5 text-neutral-400" />
+          </button>
+        </div>
       ) : (
         /* Expanded Floating Sticky Notes Widget Card */
         <div className={`w-80 sm:w-96 rounded-2xl border shadow-xl flex flex-col overflow-hidden transition-all duration-200 ${currentTheme.bg} ${currentTheme.border}`}>
-          {/* Widget Header */}
+          
+          {/* Widget Header with Drag Handle */}
           <div className={`px-3 py-2 ${currentTheme.header} border-b ${currentTheme.border} flex items-center justify-between`}>
-            <div className="flex items-center gap-2 truncate">
+            <div className="flex items-center gap-1.5 truncate">
+              <GripVertical
+                onMouseDown={handleStartWidgetDrag}
+                onTouchStart={handleStartWidgetDrag}
+                className="w-3.5 h-3.5 text-neutral-400 cursor-grab active:cursor-grabbing hover:text-neutral-700 shrink-0"
+              />
               <StickyNoteIcon className="w-3.5 h-3.5 text-amber-500 shrink-0" />
               <span className={`font-extrabold text-xs tracking-tight ${currentTheme.text}`}>
                 Pinned Sticky Notes
@@ -423,6 +509,7 @@ export default function QuickStickyNotesWidget({ onOpenFullNotes }: QuickStickyN
               {/* Widget Footer */}
               <div className="pt-2 border-t border-black/5 flex items-center justify-between text-[10px] text-neutral-400 mt-2">
                 <button
+                  type="button"
                   onClick={onOpenFullNotes}
                   className="hover:underline font-bold text-indigo-600 flex items-center gap-1 cursor-pointer"
                 >

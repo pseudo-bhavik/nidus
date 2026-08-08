@@ -32,6 +32,7 @@ interface CentralMonitorProps {
   onToggleHighPriority: () => void;
   activeDensity: string;
   activeHighlightStyle: string;
+  onOpenStickyNotes?: () => void;
 }
 
 export default function CentralMonitor({
@@ -61,6 +62,7 @@ export default function CentralMonitor({
   onToggleHighPriority,
   activeDensity,
   activeHighlightStyle,
+  onOpenStickyNotes,
 }: CentralMonitorProps) {
   const [urlInput, setUrlInput] = useState('');
   const [submitting, setSubmitting] = useState(false);
@@ -507,7 +509,7 @@ export default function CentralMonitor({
       )}
 
       {/* Pinned Quick Sticky Notes Floating Widget on Home Screen */}
-      <QuickStickyNotesWidget />
+      <QuickStickyNotesWidget onOpenFullNotes={onOpenStickyNotes} />
     </div>
   );
 }

@@ -158,8 +158,10 @@ export default function WhiteboardCanvas({
 
   const syncDocToSupabase = async (doc: WhiteboardCanvasDoc) => {
     try {
+      const { data: { user } } = await supabase.auth.getUser();
       await supabase.from('whiteboard_docs').upsert({
         id: doc.id,
+        user_id: user?.id || null,
         title: doc.title,
         elements_data: doc.elementsData,
         app_state_data: doc.appStateData,

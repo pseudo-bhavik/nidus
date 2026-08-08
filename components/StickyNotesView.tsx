@@ -164,8 +164,10 @@ export default function StickyNotesView({ isSidebarOpen, onOpenSidebar }: Sticky
     saveTimerRef.current = setTimeout(async () => {
       setIsSyncing(true);
       try {
+        const { data: { user } } = await supabase.auth.getUser();
         const upsertPayload = updated.map((n) => ({
           id: n.id,
+          user_id: user?.id || null,
           title: n.title,
           content: n.content,
           color: n.color,
