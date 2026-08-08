@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Plus, Trash2, Search, Check, FolderOpen, PanelLeftOpen, AlertCircle, RotateCcw, X } from 'lucide-react';
+import { Plus, Trash2, Search, Check, FolderOpen, PanelLeftOpen, AlertCircle, RotateCcw, X, StickyNote } from 'lucide-react';
 import { Bookmark, ViewType } from '../lib/types';
 import BadgeDropdown from './BadgeDropdown';
 import Spinner from './Spinner';
@@ -33,6 +33,8 @@ interface CentralMonitorProps {
   activeDensity: string;
   activeHighlightStyle: string;
   onOpenStickyNotes?: () => void;
+  showStickyWidget?: boolean;
+  onToggleStickyWidget?: () => void;
 }
 
 export default function CentralMonitor({
@@ -63,6 +65,8 @@ export default function CentralMonitor({
   activeDensity,
   activeHighlightStyle,
   onOpenStickyNotes,
+  showStickyWidget = true,
+  onToggleStickyWidget,
 }: CentralMonitorProps) {
   const [urlInput, setUrlInput] = useState('');
   const [submitting, setSubmitting] = useState(false);
@@ -185,6 +189,22 @@ export default function CentralMonitor({
             </button>
           )}
         </div>
+
+        {/* Toggle Floating Sticky Notes Widget ON / OFF */}
+        {onToggleStickyWidget && (
+          <button
+            onClick={onToggleStickyWidget}
+            className={`px-2.5 py-2 rounded-md text-xs font-bold flex items-center gap-1.5 transition-all cursor-pointer border shrink-0 ${
+              showStickyWidget
+                ? 'bg-amber-50 text-amber-800 border-amber-200 hover:bg-amber-100'
+                : 'bg-neutral-100 text-neutral-500 border-neutral-200 hover:bg-neutral-200'
+            }`}
+            title="Toggle Sticky Notes Widget on Home Screen"
+          >
+            <StickyNote className={`w-3.5 h-3.5 ${showStickyWidget ? 'text-amber-600' : 'text-neutral-400'}`} />
+            <span className="hidden sm:inline">Sticky Notes: {showStickyWidget ? 'ON' : 'OFF'}</span>
+          </button>
+        )}
       </div>
 
       {/* Metrics Row */}
@@ -509,7 +529,7 @@ export default function CentralMonitor({
       )}
 
       {/* Pinned Quick Sticky Notes Floating Widget on Home Screen */}
-      <QuickStickyNotesWidget onOpenFullNotes={onOpenStickyNotes} />
+      {showStickyWidget && <QuickStickyNotesWidget onOpenFullNotes={onOpenStickyNotes} />}
     </div>
   );
 }

@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useEffect } from 'react';
+import React, { useEffect, useRef } from 'react';
 import { Excalidraw, exportToBlob } from '@excalidraw/excalidraw';
 import '@excalidraw/excalidraw/index.css';
 
@@ -19,13 +19,33 @@ export default function ExcalidrawWrapper({
   onApiReady,
   onChange,
 }: ExcalidrawWrapperProps) {
-  // Dispatch resize event after layout settles to guarantee 1:1 canvas mouse alignment
+  const apiRef = useRef<any>(null);
+
+  const handleApiReady = (api: any) => {
+    apiRef.current = api;
+    onApiReady(api);
+    if (api && typeof api.refresh === 'function') {
+      api.refresh();
+    }
+  };
+
+  // Dispatch resize event and api.refresh() after layout settles to guarantee 100% 1:1 canvas mouse alignment
   useEffect(() => {
-    const timer1 = setTimeout(() => window.dispatchEvent(new Event('resize')), 100);
-    const timer2 = setTimeout(() => window.dispatchEvent(new Event('resize')), 400);
+    const triggerRefresh = () => {
+      window.dispatchEvent(new Event('resize'));
+      if (apiRef.current && typeof apiRef.current.refresh === 'function') {
+        apiRef.current.refresh();
+      }
+    };
+
+    const timer1 = setTimeout(triggerRefresh, 50);
+    const timer2 = setTimeout(triggerRefresh, 250);
+    const timer3 = setTimeout(triggerRefresh, 600);
+
     return () => {
       clearTimeout(timer1);
       clearTimeout(timer2);
+      clearTimeout(timer3);
     };
   }, []);
 
@@ -35,7 +55,7 @@ export default function ExcalidrawWrapper({
       style={{ touchAction: 'none' }}
     >
       <Excalidraw
-        excalidrawAPI={(api: any) => onApiReady(api)}
+        excalidrawAPI={handleApiReady}
         initialData={{
           elements: initialElements,
           appState: initialAppState,

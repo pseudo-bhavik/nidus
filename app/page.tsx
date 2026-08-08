@@ -120,6 +120,22 @@ export default function Dashboard({ initialView }: { initialView?: ViewType } = 
     bookmark: Bookmark | null;
   }>({ x: 0, y: 0, visible: false, bookmark: null });
 
+  // Sticky Notes Home Screen Widget Visibility Toggle
+  const [showStickyWidget, setShowStickyWidget] = useState(true);
+
+  useEffect(() => {
+    const storedShowWidget = localStorage.getItem('nidus_show_sticky_widget');
+    if (storedShowWidget !== null) {
+      setShowStickyWidget(storedShowWidget === 'true');
+    }
+  }, []);
+
+  const handleToggleStickyWidget = () => {
+    const nextVal = !showStickyWidget;
+    setShowStickyWidget(nextVal);
+    localStorage.setItem('nidus_show_sticky_widget', String(nextVal));
+  };
+
   // v1.3 Custom Categories tracking state (without pseudo-links)
   const [customCategories, setCustomCategories] = useState<string[]>([]);
   const [collectionToDelete, setCollectionToDelete] = useState<string | null>(null);
@@ -1193,6 +1209,8 @@ export default function Dashboard({ initialView }: { initialView?: ViewType } = 
             activeDensity={activeDensity}
             activeHighlightStyle={activeHighlightStyle}
             onOpenStickyNotes={() => handleViewChange('sticky-notes')}
+            showStickyWidget={showStickyWidget}
+            onToggleStickyWidget={handleToggleStickyWidget}
           />
         )}
       </div>
