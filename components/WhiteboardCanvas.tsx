@@ -60,9 +60,9 @@ const getElementBounds = (elem: CanvasElement) => {
   }
   if (elem.type === 'text' && elem.x != null && elem.y != null) {
     const lines = (elem.text || '').split('\n');
-    const maxLineLen = Math.max(...lines.map((l) => l.length), 5);
+    const maxLineLen = Math.max(...lines.map((l) => l.length), 4);
     const textW = Math.max(40, maxLineLen * 10);
-    const textH = Math.max(24, lines.length * 20);
+    const textH = Math.max(24, lines.length * 22);
     return { minX: elem.x, minY: elem.y, maxX: elem.x + textW, maxY: elem.y + textH, width: textW, height: textH };
   }
   if (elem.x != null && elem.y != null && elem.width != null && elem.height != null) {
@@ -134,8 +134,9 @@ export default function WhiteboardCanvas({
   // Selection & Lasso Drag State
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
 
-  // Text Tool Overlay State
+  // Text Tool Overlay & Focus Ref
   const [activeTextInput, setActiveTextInput] = useState<{ x: number; y: number; text: string } | null>(null);
+  const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const [spaceHeld, setSpaceHeld] = useState(false);
 
   // DUAL CANVAS REFS (Layer 1: Static Background, Layer 2: Interactive Foreground)
@@ -157,6 +158,13 @@ export default function WhiteboardCanvas({
   const panStartRef = useRef({ x: 0, y: 0 });
   const panOffsetStartRef = useRef({ x: 0, y: 0 });
   const animFrameRef = useRef<number>(0);
+
+  // Explicitly focus textarea whenever activeTextInput opens
+  useEffect(() => {
+    if (activeTextInput && textareaRef.current) {
+      textareaRef.current.focus();
+    }
+  }, [activeTextInput]);
 
   // Synchronize Canvas Dimensions to Container Bounding Box
   const syncCanvasDimensions = useCallback(() => {
@@ -570,7 +578,8 @@ export default function WhiteboardCanvas({
         }
       } else if (elem.type === 'text' && elem.x != null && elem.y != null && elem.text) {
         ctx.save();
-        ctx.fillStyle = elem.strokeColor && elem.strokeColor !== 'transparent' ? elem.strokeColor : (canvasTheme === 'dark' ? '#ffffff' : '#1e1e1e');
+        const textColor = elem.strokeColor && elem.strokeColor !== 'transparent' ? elem.strokeColor : (canvasTheme === 'dark' ? '#ffffff' : '#1e1e1e');
+        ctx.fillStyle = textColor;
         const fontSize = Math.max(14, 16 * (elem.strokeWidth || 1));
         ctx.font = `600 ${fontSize}px "Segoe UI", Inter, sans-serif`;
         ctx.textBaseline = 'top';
@@ -626,7 +635,7 @@ export default function WhiteboardCanvas({
     renderBackgroundLayer();
   }, [renderBackgroundLayer]);
 
-  // ---------- LAYER 2: INTERACTIVE FOREGROUND CANVAS RENDERER ----------
+  // ---------- LAYER 2: INTERACTIVE FOREGROUND CANVAS RRENDERER ----------
   const renderForegroundLayer = useCallback(() => {
     syncCanvasDimensions();
     const canvas = fgCanvasRef.current;
@@ -755,6 +764,11 @@ export default function WhiteboardCanvas({
       return;
     }
 
+    // Save any active open text input before starting a new action
+    if (activeTextInput && activeTextInput.text.trim()) {
+      handleTextSubmit();
+    }
+
     // Text Tool Overlay Trigger
     if (tool === 'text') {
       setActiveTextInput({ x, y, text: '' });
@@ -783,6 +797,14 @@ export default function WhiteboardCanvas({
       const clickedElem = [...elements].reverse().find((el) => isPointInElement(x, y, el));
 
       if (clickedElem) {
+        // If clicking an existing text element, open for editing
+        if (clickedElem.type === 'text' && clickedElem.x != null && clickedElem.y != null) {
+          setActiveTextInput({ x: clickedElem.x, y: clickedElem.y, text: clickedElem.text || '' });
+          // Remove old element so it gets replaced with updated text
+          setElements(elements.filter((el) => el.id !== clickedElem.id));
+          return;
+        }
+
         let newSelected = selectedIds;
         if (!e.shiftKey && !selectedIds.includes(clickedElem.id)) {
           newSelected = [clickedElem.id];
@@ -1049,13 +1071,14 @@ export default function WhiteboardCanvas({
   const handleTextSubmit = (e?: React.FormEvent) => {
     if (e) e.preventDefault();
     if (activeTextInput && activeTextInput.text.trim()) {
+      const textColor = strokeColor && strokeColor !== 'transparent' ? strokeColor : (canvasTheme === 'dark' ? '#ffffff' : '#1e1e1e');
       const newElem: CanvasElement = {
         id: 'e-' + Date.now() + Math.random().toString(36).substr(2, 4),
         type: 'text',
         x: activeTextInput.x,
         y: activeTextInput.y,
         text: activeTextInput.text.trim(),
-        strokeColor: strokeColor === 'transparent' || !strokeColor ? '#1e1e1e' : strokeColor,
+        strokeColor: textColor,
         bgColor: 'transparent',
         strokeWidth,
         strokeStyle,
@@ -1313,27 +1336,36 @@ export default function WhiteboardCanvas({
         {/* Dual Canvas Display Container */}
         <div ref={containerRef} className="flex-1 relative overflow-hidden">
           
-          {/* Top Excalidraw Floating Toolbar with Number Keys (1-0) */}
-          <div className="absolute top-3 left-1/2 -translate-x-1/2 z-30 bg-white/95 backdrop-blur-md border border-neutral-250 shadow-md rounded-2xl px-2 py-1.5 flex items-center gap-1">
+          {/* Top Excalidraw Floating Toolbar with Non-Overlapping Hotkey Badges */}
+          <div className="absolute top-3 left-1/2 -translate-x-1/2 z-30 bg-white/95 backdrop-blur-md border border-neutral-250 shadow-md rounded-2xl px-2.5 py-1.5 flex items-center gap-1.5">
             {TOOLS.map((t) => {
               const Icon = t.icon;
+              const isActive = tool === t.id;
               return (
                 <button
                   key={t.id}
                   onClick={() => setTool(t.id)}
                   className={`p-2 rounded-xl transition-all cursor-pointer relative flex items-center justify-center ${
-                    tool === t.id ? 'bg-indigo-600 text-white shadow-2xs font-bold' : 'text-neutral-700 hover:bg-neutral-100'
+                    isActive ? 'bg-indigo-600 text-white shadow-2xs font-bold' : 'text-neutral-700 hover:bg-neutral-100'
                   }`}
                   title={`${t.label} (Press ${t.keyNum})`}
                 >
                   <Icon className="w-4 h-4" />
-                  <span className="absolute bottom-0.5 right-1 text-[9px] font-extrabold opacity-75 leading-none">{t.keyNum}</span>
+                  <span
+                    className={`absolute -top-1 -right-1 w-3.5 h-3.5 text-[9px] font-extrabold rounded-full flex items-center justify-center border shadow-2xs transition-colors ${
+                      isActive
+                        ? 'bg-indigo-900 text-white border-indigo-500'
+                        : 'bg-neutral-100 text-neutral-600 border-neutral-300'
+                    }`}
+                  >
+                    {t.keyNum}
+                  </span>
                 </button>
               );
             })}
           </div>
 
-          {/* Text Tool Active Input Overlay (Multi-line Textarea) */}
+          {/* Text Tool Active Input Overlay (Bulletproof Focus & Event Isolation) */}
           {activeTextInput && (
             <form
               onSubmit={(e) => {
@@ -1348,19 +1380,22 @@ export default function WhiteboardCanvas({
               }}
             >
               <textarea
+                ref={textareaRef}
                 value={activeTextInput.text}
                 onChange={(e) => setActiveTextInput({ ...activeTextInput, text: e.target.value })}
                 onKeyDown={(e) => {
+                  e.stopPropagation();
                   if (e.key === 'Enter' && !e.shiftKey) {
                     e.preventDefault();
                     handleTextSubmit();
                   }
                 }}
+                onKeyUp={(e) => e.stopPropagation()}
+                onKeyPress={(e) => e.stopPropagation()}
                 onBlur={() => handleTextSubmit()}
                 placeholder="Type note & press Enter (Shift+Enter for new line)..."
-                autoFocus
                 rows={Math.max(1, activeTextInput.text.split('\n').length)}
-                className="px-2.5 py-1.5 bg-white/95 border-2 border-indigo-500 rounded-lg shadow-xl text-sm font-semibold outline-none text-neutral-900 min-w-[180px] resize-none leading-snug"
+                className="px-2.5 py-1.5 bg-white/95 border-2 border-indigo-500 rounded-lg shadow-2xl text-sm font-semibold outline-none text-neutral-900 min-w-[180px] resize-none leading-snug"
               />
             </form>
           )}
