@@ -80,6 +80,17 @@ export default function WhiteboardCanvas({
     setActiveDocId(DEFAULT_DOC.id);
   }, []);
 
+  // Lock root document zoom to 1 while Canvas is mounted so mouse pointer matches 1:1
+  useEffect(() => {
+    const prevZoom = document.documentElement.style.zoom;
+    document.documentElement.style.zoom = '1';
+    window.dispatchEvent(new Event('resize'));
+    return () => {
+      document.documentElement.style.zoom = prevZoom || '';
+      window.dispatchEvent(new Event('resize'));
+    };
+  }, []);
+
   // Trigger window resize when sidebar state changes to fix pointer alignment instantly
   useEffect(() => {
     const timer = setTimeout(() => {

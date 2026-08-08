@@ -31,7 +31,6 @@
 }
 
 html {
-  zoom: 1.04; /* Zoom overall layout slightly by 4% on the root html element */
   overflow: hidden;
 }
 
