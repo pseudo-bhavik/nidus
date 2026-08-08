@@ -4,7 +4,7 @@ import React, { useState, useEffect, useCallback, useRef } from 'react';
 import dynamic from 'next/dynamic';
 import {
   PenTool, Plus, Trash2, Edit2, Download, Moon, Sun,
-  Maximize2, Minimize2, Check, PanelLeftOpen, Share2, Upload, Copy, ExternalLink
+  Maximize2, Minimize2, Check, PanelLeftOpen, Share2, Upload, GripVertical
 } from 'lucide-react';
 import { WhiteboardCanvasDoc } from '../lib/types';
 import { supabase } from '../lib/supabase';
@@ -53,6 +53,10 @@ export default function WhiteboardCanvas({
   const [canvasTheme, setCanvasTheme] = useState<'light' | 'dark'>('light');
   const [isFullScreen, setIsFullScreen] = useState(false);
   const [copiedLink, setCopiedLink] = useState(false);
+
+  // Drag & Drop Tab Reordering State
+  const [draggedTabIdx, setDraggedTabIdx] = useState<number | null>(null);
+  const [dragOverTabIdx, setDragOverTabIdx] = useState<number | null>(null);
 
   // Excalidraw API ref
   const [excalidrawAPI, setExcalidrawAPI] = useState<any>(null);
@@ -209,7 +213,7 @@ export default function WhiteboardCanvas({
     [activeDocId]
   );
 
-  // Document tab actions
+  // Document Tab Actions
   const handleCreateDoc = () => {
     if (excalidrawAPI) {
       const currentElements = excalidrawAPI.getSceneElements();
@@ -281,6 +285,44 @@ export default function WhiteboardCanvas({
       setExcalidrawAPI(null);
       setExcalidrawKey((k) => k + 1);
     }
+  };
+
+  // Drag & Drop Handlers for Reordering Canvas Tabs
+  const handleTabDragStart = (idx: number, e: React.DragEvent) => {
+    setDraggedTabIdx(idx);
+    e.dataTransfer.effectAllowed = 'move';
+    e.dataTransfer.setData('text/plain', idx.toString());
+  };
+
+  const handleTabDragOver = (idx: number, e: React.DragEvent) => {
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'move';
+    if (dragOverTabIdx !== idx) {
+      setDragOverTabIdx(idx);
+    }
+  };
+
+  const handleTabDrop = (dropIdx: number, e: React.DragEvent) => {
+    e.preventDefault();
+    if (draggedTabIdx === null || draggedTabIdx === dropIdx) {
+      setDraggedTabIdx(null);
+      setDragOverTabIdx(null);
+      return;
+    }
+
+    const reordered = [...docs];
+    const [moved] = reordered.splice(draggedTabIdx, 1);
+    reordered.splice(dropIdx, 0, moved);
+
+    setDocs(reordered);
+    saveDocsToStorage(reordered);
+    setDraggedTabIdx(null);
+    setDragOverTabIdx(null);
+  };
+
+  const handleTabDragEnd = () => {
+    setDraggedTabIdx(null);
+    setDragOverTabIdx(null);
   };
 
   const handleSaveRename = (e?: React.FormEvent) => {
@@ -406,13 +448,15 @@ export default function WhiteboardCanvas({
         className="hidden"
       />
 
-      {/* Top Navigation & Multi-Tab Header Bar */}
-      <div className="h-10 px-3 bg-white/95 border-b border-neutral-200 flex items-center justify-between shrink-0 text-xs z-30">
-        <div className="flex items-center gap-2 overflow-x-auto py-1 max-w-[55%] no-scrollbar">
+      {/* Top Navigation & Drag-and-Drop Multi-Tab Header Bar */}
+      <div className="h-10 px-2 sm:px-3 bg-white/95 border-b border-neutral-200 flex items-center justify-between shrink-0 text-xs z-30 min-w-0">
+        
+        {/* Left Side: Brand Icon & Drag-and-Drop Canvas Tabs */}
+        <div className="flex items-center gap-1.5 sm:gap-2 overflow-x-auto py-1 flex-1 min-w-0 no-scrollbar touch-pan-x">
           {!isSidebarOpen && onOpenSidebar && (
             <button
               onClick={onOpenSidebar}
-              className="p-1 hover:bg-neutral-100 rounded-md text-neutral-600 cursor-pointer shrink-0 mr-1"
+              className="p-1 hover:bg-neutral-100 rounded-md text-neutral-600 cursor-pointer shrink-0 mr-0.5"
               title="Open Navigation Sidebar"
             >
               <PanelLeftOpen
@@ -422,7 +466,7 @@ export default function WhiteboardCanvas({
             </button>
           )}
 
-          <div className="flex items-center gap-1.5 font-bold text-neutral-800 mr-2 shrink-0">
+          <div className="flex items-center gap-1.5 font-bold text-neutral-800 mr-1 sm:mr-2 shrink-0">
             <PenTool
               className="w-4 h-4 text-hn-orange"
               style={{ color: 'var(--accent-color)' }}
@@ -430,28 +474,50 @@ export default function WhiteboardCanvas({
             <span className="hidden sm:inline">Excalidraw Canvas</span>
           </div>
 
-          <div className="flex items-center gap-1">
-            {docs.map((doc) => (
-              <button
-                key={doc.id}
-                onClick={() => handleSwitchDoc(doc.id)}
-                className={`px-2.5 py-1 rounded-md flex items-center gap-1.5 font-semibold text-[11px] transition-all cursor-pointer shrink-0 ${
-                  doc.id === activeDocId
-                    ? 'bg-neutral-100 text-neutral-900 shadow-2xs border border-neutral-200 font-bold'
-                    : 'text-neutral-500 hover:text-neutral-700 hover:bg-neutral-50'
-                }`}
-              >
-                <span className="max-w-[90px] truncate">{doc.title}</span>
-                {doc.id === activeDocId && docs.length > 1 && (
-                  <span
-                    onClick={(e) => handleDeleteDoc(doc.id, e)}
-                    className="p-0.5 hover:text-red-600 rounded text-neutral-400 cursor-pointer"
+          {/* Reorderable Tabs Container */}
+          <div className="flex items-center gap-1 overflow-x-auto no-scrollbar">
+            {docs.map((doc, idx) => {
+              const isSelected = doc.id === activeDocId;
+              const isDragging = draggedTabIdx === idx;
+              const isDragOver = dragOverTabIdx === idx;
+
+              return (
+                <div
+                  key={doc.id}
+                  draggable
+                  onDragStart={(e) => handleTabDragStart(idx, e)}
+                  onDragOver={(e) => handleTabDragOver(idx, e)}
+                  onDrop={(e) => handleTabDrop(idx, e)}
+                  onDragEnd={handleTabDragEnd}
+                  className={`group relative flex items-center shrink-0 rounded-md transition-all ${
+                    isDragging ? 'opacity-40 scale-95 border-dashed border-indigo-400' : ''
+                  } ${isDragOver ? 'ring-2 ring-indigo-500 scale-105' : ''}`}
+                >
+                  <button
+                    onClick={() => handleSwitchDoc(doc.id)}
+                    className={`px-2 sm:px-2.5 py-1 rounded-md flex items-center gap-1.5 font-semibold text-[11px] transition-all cursor-grab active:cursor-grabbing shrink-0 ${
+                      isSelected
+                        ? 'bg-neutral-100 text-neutral-900 shadow-2xs border border-neutral-200 font-bold'
+                        : 'text-neutral-500 hover:text-neutral-700 hover:bg-neutral-50'
+                    }`}
+                    title="Drag to reorder tab"
                   >
-                    <Trash2 className="w-3 h-3" />
-                  </span>
-                )}
-              </button>
-            ))}
+                    <GripVertical className="w-2.5 h-2.5 opacity-0 group-hover:opacity-60 transition-opacity hidden sm:block text-neutral-400" />
+                    <span className="max-w-[70px] sm:max-w-[100px] truncate">{doc.title}</span>
+                    {isSelected && docs.length > 1 && (
+                      <span
+                        onClick={(e) => handleDeleteDoc(doc.id, e)}
+                        className="p-0.5 hover:text-red-600 rounded text-neutral-400 cursor-pointer"
+                        title="Close Canvas"
+                      >
+                        <Trash2 className="w-3 h-3" />
+                      </span>
+                    )}
+                  </button>
+                </div>
+              );
+            })}
+
             <button
               onClick={handleCreateDoc}
               className="p-1 hover:bg-neutral-100 text-neutral-500 rounded-md cursor-pointer shrink-0"
@@ -462,7 +528,8 @@ export default function WhiteboardCanvas({
           </div>
         </div>
 
-        <div className="flex items-center gap-1.5 shrink-0">
+        {/* Right Side Controls: Share, Import, Export, Theme, Fullscreen */}
+        <div className="flex items-center gap-1 sm:gap-1.5 shrink-0 ml-1">
           {isRenaming ? (
             <form onSubmit={handleSaveRename} className="flex items-center gap-1">
               <input
@@ -470,7 +537,7 @@ export default function WhiteboardCanvas({
                 value={renameTitle}
                 onChange={(e) => setRenameTitle(e.target.value)}
                 autoFocus
-                className="px-2 py-0.5 bg-white border border-neutral-300 rounded text-[11px] font-bold outline-none text-neutral-800"
+                className="px-1.5 sm:px-2 py-0.5 bg-white border border-neutral-300 rounded text-[11px] font-bold outline-none text-neutral-800 w-24 sm:w-auto"
               />
               <button
                 type="submit"
@@ -485,7 +552,7 @@ export default function WhiteboardCanvas({
                 setRenameTitle(activeDoc.title);
                 setIsRenaming(true);
               }}
-              className="px-2 py-1 text-neutral-500 hover:text-neutral-800 hover:bg-neutral-100 rounded flex items-center gap-1 font-semibold text-[11px] cursor-pointer"
+              className="px-1.5 sm:px-2 py-1 text-neutral-500 hover:text-neutral-800 hover:bg-neutral-100 rounded flex items-center gap-1 font-semibold text-[11px] cursor-pointer"
               title="Rename Active Canvas"
             >
               <Edit2 className="w-3 h-3" />
@@ -493,24 +560,24 @@ export default function WhiteboardCanvas({
             </button>
           )}
 
-          <div className="h-4 w-px bg-neutral-200 mx-0.5" />
+          <div className="h-4 w-px bg-neutral-200 mx-0.5 hidden sm:block" />
 
           {/* Shareable Link Button */}
           <button
             onClick={handleShareLink}
-            className={`px-2 py-1 rounded flex items-center gap-1 font-semibold text-[11px] cursor-pointer transition-all ${
+            className={`px-1.5 sm:px-2 py-1 rounded flex items-center gap-1 font-semibold text-[11px] cursor-pointer transition-all ${
               copiedLink ? 'bg-emerald-50 text-emerald-600 border border-emerald-200' : 'bg-indigo-50 text-indigo-600 hover:bg-indigo-100'
             }`}
             title="Copy Shareable Link for Other Devices"
           >
             {copiedLink ? <Check className="w-3 h-3 text-emerald-600" /> : <Share2 className="w-3 h-3" />}
-            <span>{copiedLink ? 'Link Copied!' : 'Share'}</span>
+            <span className="hidden sm:inline">{copiedLink ? 'Link Copied!' : 'Share'}</span>
           </button>
 
           {/* Import File Button */}
           <button
             onClick={() => fileInputRef.current?.click()}
-            className="p-1.5 text-neutral-600 hover:text-neutral-900 hover:bg-neutral-100 rounded-md cursor-pointer"
+            className="p-1 sm:p-1.5 text-neutral-600 hover:text-neutral-900 hover:bg-neutral-100 rounded-md cursor-pointer"
             title="Import .excalidraw File"
           >
             <Upload className="w-3.5 h-3.5" />
@@ -519,7 +586,7 @@ export default function WhiteboardCanvas({
           {/* Export PNG Image */}
           <button
             onClick={handleExportPNG}
-            className="p-1.5 text-neutral-600 hover:text-neutral-900 hover:bg-neutral-100 rounded-md cursor-pointer"
+            className="p-1 sm:p-1.5 text-neutral-600 hover:text-neutral-900 hover:bg-neutral-100 rounded-md cursor-pointer"
             title="Export PNG Image"
           >
             <Download className="w-3.5 h-3.5" />
@@ -528,7 +595,7 @@ export default function WhiteboardCanvas({
           {/* Export .excalidraw File */}
           <button
             onClick={handleExportExcalidrawFile}
-            className="p-1.5 text-neutral-600 hover:text-neutral-900 hover:bg-neutral-100 rounded-md cursor-pointer text-[10px] font-bold"
+            className="p-1 sm:p-1.5 text-neutral-600 hover:text-neutral-900 hover:bg-neutral-100 rounded-md cursor-pointer text-[10px] font-bold hidden sm:block"
             title="Export .excalidraw JSON"
           >
             JSON
@@ -536,7 +603,7 @@ export default function WhiteboardCanvas({
 
           <button
             onClick={handleToggleTheme}
-            className="p-1.5 text-neutral-600 hover:text-neutral-900 hover:bg-neutral-100 rounded-md cursor-pointer"
+            className="p-1 sm:p-1.5 text-neutral-600 hover:text-neutral-900 hover:bg-neutral-100 rounded-md cursor-pointer"
             title="Toggle Light/Dark Theme"
           >
             {canvasTheme === 'light' ? (
@@ -548,7 +615,7 @@ export default function WhiteboardCanvas({
 
           <button
             onClick={() => setIsFullScreen(!isFullScreen)}
-            className="p-1.5 text-neutral-600 hover:text-neutral-900 hover:bg-neutral-100 rounded-md cursor-pointer"
+            className="p-1 sm:p-1.5 text-neutral-600 hover:text-neutral-900 hover:bg-neutral-100 rounded-md cursor-pointer hidden sm:block"
             title="Toggle Full Screen"
           >
             {isFullScreen ? (
@@ -560,8 +627,8 @@ export default function WhiteboardCanvas({
         </div>
       </div>
 
-      {/* Excalidraw Canvas — Full Size */}
-      <div className="flex-1 w-full relative overflow-hidden">
+      {/* Excalidraw Canvas — Full Size Container */}
+      <div className="flex-1 w-full relative overflow-hidden touch-none">
         <ExcalidrawWrapper
           key={excalidrawKey}
           initialElements={activeDoc.elementsData || []}

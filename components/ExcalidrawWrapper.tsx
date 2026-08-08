@@ -30,7 +30,10 @@ export default function ExcalidrawWrapper({
   }, []);
 
   return (
-    <div className="absolute inset-0 w-full h-full overflow-hidden">
+    <div 
+      className="absolute inset-0 w-full h-full overflow-hidden touch-none"
+      style={{ touchAction: 'none' }}
+    >
       <Excalidraw
         excalidrawAPI={(api: any) => onApiReady(api)}
         initialData={{
