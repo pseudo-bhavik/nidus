@@ -116,7 +116,7 @@ export default function QuickStickyNotesWidget({ onOpenFullNotes }: QuickStickyN
     } catch (e) {}
   }, []);
 
-  // Handle widget free-form screen dragging
+  // Handle widget free-form screen dragging (Strictly clamped to viewport bounds)
   const handleStartWidgetDrag = (e: React.MouseEvent | React.TouchEvent) => {
     isDraggingWidgetRef.current = true;
     const clientX = 'touches' in e ? e.touches[0].clientX : e.clientX;
@@ -136,8 +136,12 @@ export default function QuickStickyNotesWidget({ onOpenFullNotes }: QuickStickyN
       const moveX = 'touches' in moveEvt ? moveEvt.touches[0].clientX : moveEvt.clientX;
       const moveY = 'touches' in moveEvt ? moveEvt.touches[0].clientY : moveEvt.clientY;
 
-      const newX = Math.max(10, Math.min(window.innerWidth - 300, moveX - dragOffsetRef.current.x));
-      const newY = Math.max(10, Math.min(window.innerHeight - 150, moveY - dragOffsetRef.current.y));
+      // Clamp strictly within viewport boundaries so widget cannot be dragged off-screen
+      const maxX = Math.max(0, window.innerWidth - 320);
+      const maxY = Math.max(0, window.innerHeight - 150);
+
+      const newX = Math.max(0, Math.min(maxX, moveX - dragOffsetRef.current.x));
+      const newY = Math.max(0, Math.min(maxY, moveY - dragOffsetRef.current.y));
 
       const newPos = { x: newX, y: newY };
       setWidgetPos(newPos);
@@ -160,16 +164,18 @@ export default function QuickStickyNotesWidget({ onOpenFullNotes }: QuickStickyN
     window.addEventListener('touchend', handleEnd);
   };
 
-  // Load notes from Supabase cloud first (with localStorage fallback)
+  // Load user sticky notes from Supabase cloud (user-isolated) with localStorage fallback
   useEffect(() => {
     let isMounted = true;
 
     const loadNotesData = async () => {
       try {
-        const { data: dbNotes, error } = await supabase
-          .from('sticky_notes')
-          .select('*')
-          .order('created_at', { ascending: false });
+        const { data: { user } } = await supabase.auth.getUser();
+        let query = supabase.from('sticky_notes').select('*');
+        if (user) {
+          query = query.eq('user_id', user.id);
+        }
+        const { data: dbNotes, error } = await query.order('created_at', { ascending: false });
 
         if (!error && dbNotes && dbNotes.length > 0 && isMounted) {
           const mapped: StickyNote[] = dbNotes.map((n: any) => ({

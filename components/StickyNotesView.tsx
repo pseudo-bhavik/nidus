@@ -107,10 +107,12 @@ export default function StickyNotesView({ isSidebarOpen, onOpenSidebar }: Sticky
     const loadNotesData = async () => {
       setIsSyncing(true);
       try {
-        const { data: dbNotes, error } = await supabase
-          .from('sticky_notes')
-          .select('*')
-          .order('created_at', { ascending: false });
+        const { data: { user } } = await supabase.auth.getUser();
+        let query = supabase.from('sticky_notes').select('*');
+        if (user) {
+          query = query.eq('user_id', user.id);
+        }
+        const { data: dbNotes, error } = await query.order('created_at', { ascending: false });
 
         if (!error && dbNotes && dbNotes.length > 0 && isMounted) {
           const mapped: StickyNote[] = dbNotes.map((n: any) => ({

@@ -4,7 +4,7 @@ import React, { useState, useEffect, useCallback, useRef } from 'react';
 import dynamic from 'next/dynamic';
 import {
   PenTool, Plus, Trash2, Edit2, Download, Moon, Sun,
-  Maximize2, Minimize2, Check, PanelLeftOpen, Share2, Upload, GripVertical
+  Maximize2, Minimize2, Check, PanelLeftOpen, Share2, Upload, GripVertical, Lock
 } from 'lucide-react';
 import { WhiteboardCanvasDoc } from '../lib/types';
 import { supabase } from '../lib/supabase';
@@ -53,6 +53,7 @@ export default function WhiteboardCanvas({
   const [canvasTheme, setCanvasTheme] = useState<'light' | 'dark'>('light');
   const [isFullScreen, setIsFullScreen] = useState(false);
   const [copiedLink, setCopiedLink] = useState(false);
+  const [isSharedMode, setIsSharedMode] = useState(false);
 
   // Drag & Drop Tab Reordering State
   const [draggedTabIdx, setDraggedTabIdx] = useState<number | null>(null);
@@ -68,21 +69,48 @@ export default function WhiteboardCanvas({
   // Key to force re-mount Excalidraw when switching tabs
   const [excalidrawKey, setExcalidrawKey] = useState(0);
 
-  // 1. Load saved canvas tabs (First check Supabase, fallback to localStorage)
+  // 1. Load saved canvas tabs (Isolated for shared links)
   useEffect(() => {
     let isMounted = true;
 
     const loadCanvasData = async () => {
-      // Check if URL has ?canvas=<docId> parameter for direct shared link loading
       const urlParams = new URLSearchParams(window.location.search);
       const sharedCanvasId = urlParams.get('canvas');
 
-      // Attempt loading from Supabase first if available
+      // IF SHARED LINK PRESENT: Fetch ONLY that single canvas for total data isolation
+      if (sharedCanvasId) {
+        try {
+          const { data: sharedDoc, error } = await supabase
+            .from('whiteboard_docs')
+            .select('*')
+            .eq('id', sharedCanvasId)
+            .maybeSingle();
+
+          if (!error && sharedDoc && isMounted) {
+            const mappedSingle: WhiteboardCanvasDoc = {
+              id: sharedDoc.id,
+              title: sharedDoc.title || 'Shared Canvas',
+              elementsData: sharedDoc.elements_data || [],
+              appStateData: sharedDoc.app_state_data || {},
+              created_at: sharedDoc.created_at,
+              updated_at: sharedDoc.updated_at,
+            };
+            setDocs([mappedSingle]);
+            setActiveDocId(mappedSingle.id);
+            setIsSharedMode(true);
+            return;
+          }
+        } catch (err) {}
+      }
+
+      // NORMAL VIEW: Load authenticated user's own canvases
       try {
-        const { data: dbDocs, error } = await supabase
-          .from('whiteboard_docs')
-          .select('*')
-          .order('updated_at', { ascending: false });
+        const { data: { user } } = await supabase.auth.getUser();
+        let query = supabase.from('whiteboard_docs').select('*');
+        if (user) {
+          query = query.eq('user_id', user.id);
+        }
+        const { data: dbDocs, error } = await query.order('updated_at', { ascending: false });
 
         if (!error && dbDocs && dbDocs.length > 0 && isMounted) {
           const mappedDocs: WhiteboardCanvasDoc[] = dbDocs.map((d: any) => ({
@@ -95,25 +123,19 @@ export default function WhiteboardCanvas({
           }));
 
           setDocs(mappedDocs);
-          const targetId = sharedCanvasId && mappedDocs.some(d => d.id === sharedCanvasId)
-            ? sharedCanvasId
-            : mappedDocs[0].id;
-          setActiveDocId(targetId);
+          setActiveDocId(mappedDocs[0].id);
           return;
         }
       } catch (err) {}
 
-      // Fallback to localStorage
+      // Fallback to localStorage for guest / offline mode
       try {
         const saved = localStorage.getItem('nidus_whiteboard_docs');
         if (saved) {
           const parsed = JSON.parse(saved);
           if (Array.isArray(parsed) && parsed.length > 0 && isMounted) {
             setDocs(parsed);
-            const targetId = sharedCanvasId && parsed.some(d => d.id === sharedCanvasId)
-              ? sharedCanvasId
-              : parsed[0].id;
-            setActiveDocId(targetId);
+            setActiveDocId(parsed[0].id);
             return;
           }
         }
@@ -476,58 +498,65 @@ export default function WhiteboardCanvas({
             <span className="hidden sm:inline">Excalidraw Canvas</span>
           </div>
 
-          {/* Reorderable Tabs Container */}
-          <div className="flex items-center gap-1 overflow-x-auto no-scrollbar">
-            {docs.map((doc, idx) => {
-              const isSelected = doc.id === activeDocId;
-              const isDragging = draggedTabIdx === idx;
-              const isDragOver = dragOverTabIdx === idx;
+          {/* Reorderable Tabs Container or Shared Link Badge */}
+          {isSharedMode ? (
+            <div className="flex items-center gap-1.5 px-2.5 py-1 bg-indigo-50 border border-indigo-200 rounded-md text-indigo-700 font-bold text-[11px] shrink-0">
+              <Lock className="w-3 h-3 text-indigo-600" />
+              <span>Shared Canvas: {activeDoc.title}</span>
+            </div>
+          ) : (
+            <div className="flex items-center gap-1 overflow-x-auto no-scrollbar">
+              {docs.map((doc, idx) => {
+                const isSelected = doc.id === activeDocId;
+                const isDragging = draggedTabIdx === idx;
+                const isDragOver = dragOverTabIdx === idx;
 
-              return (
-                <div
-                  key={doc.id}
-                  draggable
-                  onDragStart={(e) => handleTabDragStart(idx, e)}
-                  onDragOver={(e) => handleTabDragOver(idx, e)}
-                  onDrop={(e) => handleTabDrop(idx, e)}
-                  onDragEnd={handleTabDragEnd}
-                  className={`group relative flex items-center shrink-0 rounded-md transition-all ${
-                    isDragging ? 'opacity-40 scale-95 border-dashed border-indigo-400' : ''
-                  } ${isDragOver ? 'ring-2 ring-indigo-500 scale-105' : ''}`}
-                >
-                  <button
-                    onClick={() => handleSwitchDoc(doc.id)}
-                    className={`px-2 sm:px-2.5 py-1 rounded-md flex items-center gap-1.5 font-semibold text-[11px] transition-all cursor-grab active:cursor-grabbing shrink-0 ${
-                      isSelected
-                        ? 'bg-neutral-100 text-neutral-900 shadow-2xs border border-neutral-200 font-bold'
-                        : 'text-neutral-500 hover:text-neutral-700 hover:bg-neutral-50'
-                    }`}
-                    title="Drag to reorder tab"
+                return (
+                  <div
+                    key={doc.id}
+                    draggable
+                    onDragStart={(e) => handleTabDragStart(idx, e)}
+                    onDragOver={(e) => handleTabDragOver(idx, e)}
+                    onDrop={(e) => handleTabDrop(idx, e)}
+                    onDragEnd={handleTabDragEnd}
+                    className={`group relative flex items-center shrink-0 rounded-md transition-all ${
+                      isDragging ? 'opacity-40 scale-95 border-dashed border-indigo-400' : ''
+                    } ${isDragOver ? 'ring-2 ring-indigo-500 scale-105' : ''}`}
                   >
-                    <GripVertical className="w-2.5 h-2.5 opacity-0 group-hover:opacity-60 transition-opacity hidden sm:block text-neutral-400" />
-                    <span className="max-w-[70px] sm:max-w-[100px] truncate">{doc.title}</span>
-                    {isSelected && docs.length > 1 && (
-                      <span
-                        onClick={(e) => handleDeleteDoc(doc.id, e)}
-                        className="p-0.5 hover:text-red-600 rounded text-neutral-400 cursor-pointer"
-                        title="Close Canvas"
-                      >
-                        <Trash2 className="w-3 h-3" />
-                      </span>
-                    )}
-                  </button>
-                </div>
-              );
-            })}
+                    <button
+                      onClick={() => handleSwitchDoc(doc.id)}
+                      className={`px-2 sm:px-2.5 py-1 rounded-md flex items-center gap-1.5 font-semibold text-[11px] transition-all cursor-grab active:cursor-grabbing shrink-0 ${
+                        isSelected
+                          ? 'bg-neutral-100 text-neutral-900 shadow-2xs border border-neutral-200 font-bold'
+                          : 'text-neutral-500 hover:text-neutral-700 hover:bg-neutral-50'
+                      }`}
+                      title="Drag to reorder tab"
+                    >
+                      <GripVertical className="w-2.5 h-2.5 opacity-0 group-hover:opacity-60 transition-opacity hidden sm:block text-neutral-400" />
+                      <span className="max-w-[70px] sm:max-w-[100px] truncate">{doc.title}</span>
+                      {isSelected && docs.length > 1 && (
+                        <span
+                          onClick={(e) => handleDeleteDoc(doc.id, e)}
+                          className="p-0.5 hover:text-red-600 rounded text-neutral-400 cursor-pointer"
+                          title="Close Canvas"
+                        >
+                          <Trash2 className="w-3 h-3" />
+                        </span>
+                      )}
+                    </button>
+                  </div>
+                );
+              })}
 
-            <button
-              onClick={handleCreateDoc}
-              className="p-1 hover:bg-neutral-100 text-neutral-500 rounded-md cursor-pointer shrink-0"
-              title="New Canvas Note"
-            >
-              <Plus className="w-3.5 h-3.5" />
-            </button>
-          </div>
+              <button
+                onClick={handleCreateDoc}
+                className="p-1 hover:bg-neutral-100 text-neutral-500 rounded-md cursor-pointer shrink-0"
+                title="New Canvas Note"
+              >
+                <Plus className="w-3.5 h-3.5" />
+              </button>
+            </div>
+          )}
         </div>
 
         {/* Right Side Controls: Share, Import, Export, Theme, Fullscreen */}
