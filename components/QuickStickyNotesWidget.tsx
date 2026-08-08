@@ -1,11 +1,12 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { 
   StickyNote as StickyNoteIcon, Plus, X, Pin, Palette, 
-  ChevronDown, ChevronUp, Copy, Check, Trash2, Edit3 
+  ChevronDown, ChevronUp, Copy, Check, Trash2, GripVertical, Cloud
 } from 'lucide-react';
 import { StickyNote } from '../lib/types';
+import { supabase } from '../lib/supabase';
 
 interface QuickStickyNotesWidgetProps {
   onOpenFullNotes?: () => void;
@@ -89,43 +90,91 @@ export default function QuickStickyNotesWidget({ onOpenFullNotes }: QuickStickyN
   const [isMinimized, setIsMinimized] = useState(false);
   const [activeTabId, setActiveTabId] = useState<string>('');
   const [colorPickerNoteId, setColorPickerNoteId] = useState<string | null>(null);
+  const [copiedId, setCopiedId] = useState<string | null>(null);
 
-  // Load notes from localStorage
+  // Drag & Drop reordering state
+  const [draggedTabIdx, setDraggedTabIdx] = useState<number | null>(null);
+  const [dragOverTabIdx, setDragOverTabIdx] = useState<number | null>(null);
+
+  const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Load notes from Supabase cloud first (with localStorage fallback)
   useEffect(() => {
-    try {
-      const saved = localStorage.getItem('nidus_sticky_notes');
-      if (saved) {
-        const parsed = JSON.parse(saved);
-        if (Array.isArray(parsed) && parsed.length > 0) {
-          setNotes(parsed);
-          const pinned = parsed.filter((n: StickyNote) => n.is_pinned);
-          if (pinned.length > 0) {
-            setActiveTabId(pinned[0].id);
-          } else {
-            setActiveTabId(parsed[0].id);
-          }
+    let isMounted = true;
+
+    const loadNotesData = async () => {
+      try {
+        const { data: dbNotes, error } = await supabase
+          .from('sticky_notes')
+          .select('*')
+          .order('created_at', { ascending: false });
+
+        if (!error && dbNotes && dbNotes.length > 0 && isMounted) {
+          const mapped: StickyNote[] = dbNotes.map((n: any) => ({
+            id: n.id,
+            title: n.title || 'Untitled Note',
+            content: n.content || '',
+            color: n.color || 'yellow',
+            is_pinned: n.is_pinned ?? false,
+            created_at: n.created_at,
+            updated_at: n.updated_at,
+          }));
+          setNotes(mapped);
+          const pinned = mapped.filter((n) => n.is_pinned);
+          setActiveTabId(pinned.length > 0 ? pinned[0].id : mapped[0].id);
+          localStorage.setItem('nidus_sticky_notes', JSON.stringify(mapped));
           return;
         }
-      }
-    } catch (e) {
-      console.error('Failed to load sticky notes in widget:', e);
-    }
+      } catch (e) {}
 
-    setNotes(DEFAULT_PINNED_NOTES);
-    setActiveTabId(DEFAULT_PINNED_NOTES[0].id);
+      try {
+        const saved = localStorage.getItem('nidus_sticky_notes');
+        if (saved) {
+          const parsed = JSON.parse(saved);
+          if (Array.isArray(parsed) && parsed.length > 0 && isMounted) {
+            setNotes(parsed);
+            const pinned = parsed.filter((n: StickyNote) => n.is_pinned);
+            setActiveTabId(pinned.length > 0 ? pinned[0].id : parsed[0].id);
+            return;
+          }
+        }
+      } catch (e) {}
+
+      if (isMounted) {
+        setNotes(DEFAULT_PINNED_NOTES);
+        setActiveTabId(DEFAULT_PINNED_NOTES[0].id);
+      }
+    };
+
+    loadNotesData();
+    return () => { isMounted = false; };
   }, []);
 
-  // Save notes to storage
+  // Save notes locally and sync to Supabase cloud
   const saveNotes = (updated: StickyNote[]) => {
     setNotes(updated);
     try {
       localStorage.setItem('nidus_sticky_notes', JSON.stringify(updated));
     } catch (e) {}
+
+    if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
+    saveTimerRef.current = setTimeout(async () => {
+      try {
+        const upsertPayload = updated.map((n) => ({
+          id: n.id,
+          title: n.title,
+          content: n.content,
+          color: n.color,
+          is_pinned: n.is_pinned ?? false,
+          updated_at: n.updated_at || new Date().toISOString(),
+        }));
+        await supabase.from('sticky_notes').upsert(upsertPayload);
+      } catch (err) {}
+    }, 400);
   };
 
-  // Get top pinned notes (limit to 3 for clean widget)
   const pinnedNotes = notes.filter((n) => n.is_pinned);
-  const displayNotes = pinnedNotes.length > 0 ? pinnedNotes.slice(0, 3) : notes.slice(0, 3);
+  const displayNotes = pinnedNotes.length > 0 ? pinnedNotes.slice(0, 5) : notes.slice(0, 5);
 
   const activeNote = displayNotes.find((n) => n.id === activeTabId) || displayNotes[0];
 
@@ -163,17 +212,60 @@ export default function QuickStickyNotesWidget({ onOpenFullNotes }: QuickStickyN
   };
 
   // Delete quick note
-  const handleDeleteNote = (id: string) => {
+  const handleDeleteNote = async (id: string) => {
     const updated = notes.filter((n) => n.id !== id);
     saveNotes(updated);
+    try {
+      await supabase.from('sticky_notes').delete().eq('id', id);
+    } catch (err) {}
     if (activeTabId === id && updated.length > 0) {
       setActiveTabId(updated[0].id);
     }
   };
 
-  if (displayNotes.length === 0 && isMinimized) {
-    return null;
-  }
+  // Copy Content
+  const handleCopy = (id: string, text: string) => {
+    navigator.clipboard.writeText(text);
+    setCopiedId(id);
+    setTimeout(() => setCopiedId(null), 2000);
+  };
+
+  // Drag & Drop Handlers for Reordering Homescreen Sticky Note Tabs
+  const handleTabDragStart = (idx: number, e: React.DragEvent) => {
+    setDraggedTabIdx(idx);
+    e.dataTransfer.effectAllowed = 'move';
+    e.dataTransfer.setData('text/plain', idx.toString());
+  };
+
+  const handleTabDragOver = (idx: number, e: React.DragEvent) => {
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'move';
+    if (dragOverTabIdx !== idx) setDragOverTabIdx(idx);
+  };
+
+  const handleTabDrop = (dropIdx: number, e: React.DragEvent) => {
+    e.preventDefault();
+    if (draggedTabIdx === null || draggedTabIdx === dropIdx) {
+      setDraggedTabIdx(null);
+      setDragOverTabIdx(null);
+      return;
+    }
+
+    const reordered = [...notes];
+    const [moved] = reordered.splice(draggedTabIdx, 1);
+    reordered.splice(dropIdx, 0, moved);
+
+    saveNotes(reordered);
+    setDraggedTabIdx(null);
+    setDragOverTabIdx(null);
+  };
+
+  const handleTabDragEnd = () => {
+    setDraggedTabIdx(null);
+    setDragOverTabIdx(null);
+  };
+
+  if (displayNotes.length === 0 && isMinimized) return null;
 
   const currentTheme = activeNote ? (COLOR_STYLES[activeNote.color] || COLOR_STYLES.yellow) : COLOR_STYLES.yellow;
 
@@ -221,107 +313,123 @@ export default function QuickStickyNotesWidget({ onOpenFullNotes }: QuickStickyN
             </div>
           </div>
 
-          {/* Sticky Notes Tabs Row */}
-          {displayNotes.length > 0 && (
-            <div className="px-2 py-1.5 flex items-center gap-1 border-b border-black/5 overflow-x-auto no-scrollbar">
-              {displayNotes.map((note) => {
-                const isActive = note.id === (activeNote?.id);
-                return (
+          {/* Reorderable Tabs Navigation Bar */}
+          <div className="px-2 py-1 bg-black/5 flex items-center gap-1 overflow-x-auto no-scrollbar border-b border-black/5">
+            {displayNotes.map((note, idx) => {
+              const isSelected = activeNote && note.id === activeNote.id;
+              const isDragging = draggedTabIdx === idx;
+              const isDragOver = dragOverTabIdx === idx;
+
+              return (
+                <div
+                  key={note.id}
+                  draggable
+                  onDragStart={(e) => handleTabDragStart(idx, e)}
+                  onDragOver={(e) => handleTabDragOver(idx, e)}
+                  onDrop={(e) => handleTabDrop(idx, e)}
+                  onDragEnd={handleTabDragEnd}
+                  className={`shrink-0 transition-all ${
+                    isDragging ? 'opacity-40 scale-95 border-dashed border-indigo-400' : ''
+                  } ${isDragOver ? 'ring-2 ring-indigo-500 scale-105' : ''}`}
+                >
                   <button
-                    key={note.id}
                     onClick={() => setActiveTabId(note.id)}
-                    className={`px-2.5 py-1 rounded-md text-[11px] font-bold truncate max-w-[120px] transition-all-custom cursor-pointer flex items-center gap-1 ${
-                      isActive
-                        ? 'bg-white shadow-xs border border-black/10 text-neutral-900'
-                        : 'text-neutral-600 hover:bg-black/5'
+                    className={`px-2 py-1 rounded-md text-[10px] font-bold flex items-center gap-1 cursor-grab active:cursor-grabbing transition-all ${
+                      isSelected
+                        ? 'bg-white shadow-2xs text-neutral-900 border border-neutral-200'
+                        : 'text-neutral-600 hover:bg-white/50'
                     }`}
+                    title="Drag tab to reorder note"
                   >
-                    <span className="truncate">{note.title || 'Untitled'}</span>
+                    <GripVertical className="w-2.5 h-2.5 text-neutral-400 opacity-60" />
+                    <span className="max-w-[70px] truncate">{note.title}</span>
                   </button>
-                );
-              })}
-            </div>
-          )}
+                </div>
+              );
+            })}
+          </div>
 
-          {/* Active Note Content Editor */}
-          {activeNote ? (
-            <div className="p-3 flex flex-col gap-2">
-              {/* Note Title Input */}
-              <div className="flex items-center justify-between gap-2 border-b border-black/5 pb-1.5">
-                <input
-                  type="text"
-                  value={activeNote.title}
-                  onChange={(e) => handleUpdateNote(activeNote.id, { title: e.target.value })}
-                  placeholder="Note Title..."
-                  className={`font-bold text-xs bg-transparent outline-none flex-1 ${currentTheme.text}`}
-                />
+          {/* Active Note Content Area */}
+          {activeNote && (
+            <div className="p-3.5 flex flex-col justify-between min-h-[140px]">
+              <div>
+                {/* Title & Controls */}
+                <div className="flex items-center justify-between mb-2">
+                  <input
+                    type="text"
+                    value={activeNote.title}
+                    onChange={(e) => handleUpdateNote(activeNote.id, { title: e.target.value })}
+                    className={`font-bold text-xs bg-transparent border-none outline-none w-full ${currentTheme.text}`}
+                    placeholder="Note title..."
+                  />
 
-                <div className="flex items-center gap-1">
-                  {/* Pin toggle */}
-                  <button
-                    onClick={() => handleTogglePin(activeNote.id)}
-                    className={`p-1 rounded cursor-pointer transition-all-custom ${
-                      activeNote.is_pinned ? 'text-amber-600 bg-amber-200/50' : 'text-neutral-400 hover:text-neutral-700'
-                    }`}
-                    title={activeNote.is_pinned ? 'Unpin' : 'Pin'}
-                  >
-                    <Pin className="w-3 h-3 fill-current" />
-                  </button>
-
-                  {/* Palette Color Picker */}
-                  <div className="relative">
+                  <div className="flex items-center gap-1 shrink-0 ml-2">
                     <button
                       onClick={() => setColorPickerNoteId(colorPickerNoteId === activeNote.id ? null : activeNote.id)}
-                      className="p-1 rounded text-neutral-500 hover:text-neutral-800 cursor-pointer"
-                      title="Change Note Color"
+                      className="p-1 hover:bg-black/10 rounded text-neutral-500 cursor-pointer"
+                      title="Change color"
                     >
                       <Palette className="w-3 h-3" />
                     </button>
 
-                    {colorPickerNoteId === activeNote.id && (
-                      <div className="absolute right-0 top-full mt-1 p-1 bg-white border border-neutral-250 rounded-lg shadow-lg flex items-center gap-1 z-50">
-                        {['yellow', 'green', 'blue', 'pink', 'purple', 'orange', 'dark'].map((cKey) => (
-                          <button
-                            key={cKey}
-                            onClick={() => {
-                              handleUpdateNote(activeNote.id, { color: cKey as StickyNote['color'] });
-                              setColorPickerNoteId(null);
-                            }}
-                            className={`w-4 h-4 rounded-full ${COLOR_STYLES[cKey].dot} border border-black/10 cursor-pointer hover:scale-110 transition-transform`}
-                          />
-                        ))}
-                      </div>
-                    )}
-                  </div>
+                    <button
+                      onClick={() => handleCopy(activeNote.id, `${activeNote.title}\n${activeNote.content}`)}
+                      className="p-1 hover:bg-black/10 rounded text-neutral-500 cursor-pointer"
+                      title="Copy note text"
+                    >
+                      {copiedId === activeNote.id ? <Check className="w-3 h-3 text-emerald-600" /> : <Copy className="w-3 h-3" />}
+                    </button>
 
-                  {/* Delete note */}
-                  <button
-                    onClick={() => handleDeleteNote(activeNote.id)}
-                    className="p-1 rounded text-neutral-400 hover:text-red-600 cursor-pointer"
-                    title="Delete Note"
-                  >
-                    <Trash2 className="w-3 h-3" />
-                  </button>
+                    <button
+                      onClick={() => handleDeleteNote(activeNote.id)}
+                      className="p-1 hover:bg-red-100/50 rounded text-neutral-500 hover:text-red-600 cursor-pointer"
+                      title="Delete note"
+                    >
+                      <Trash2 className="w-3 h-3" />
+                    </button>
+                  </div>
                 </div>
+
+                {/* Color Picker Dropdown */}
+                {colorPickerNoteId === activeNote.id && (
+                  <div className="mb-2 p-1.5 bg-white rounded-lg shadow-md border border-neutral-200 flex items-center justify-between animate-fade-in">
+                    <span className="text-[9px] font-bold text-neutral-500 uppercase">Color:</span>
+                    <div className="flex items-center gap-1">
+                      {Object.keys(COLOR_STYLES).map((c) => (
+                        <button
+                          key={c}
+                          onClick={() => {
+                            handleUpdateNote(activeNote.id, { color: c as any });
+                            setColorPickerNoteId(null);
+                          }}
+                          className={`w-3.5 h-3.5 rounded-full border border-black/10 transition-transform ${COLOR_STYLES[c].dot} ${
+                            activeNote.color === c ? 'ring-2 ring-indigo-600 scale-110' : 'hover:scale-105'
+                          }`}
+                        />
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {/* Note Content Input */}
+                <textarea
+                  value={activeNote.content}
+                  onChange={(e) => handleUpdateNote(activeNote.id, { content: e.target.value })}
+                  placeholder="Type note contents..."
+                  className={`w-full bg-transparent border-none outline-none resize-none text-xs leading-relaxed ${currentTheme.text} min-h-[75px]`}
+                />
               </div>
 
-              {/* Note Content Textarea */}
-              <textarea
-                value={activeNote.content}
-                onChange={(e) => handleUpdateNote(activeNote.id, { content: e.target.value })}
-                placeholder="Type quick thoughts, reminders or links to pin on screen..."
-                className={`w-full h-24 bg-transparent outline-none text-xs leading-relaxed font-medium resize-none ${currentTheme.text} placeholder:opacity-50`}
-              />
-            </div>
-          ) : (
-            <div className="p-4 text-center text-xs text-neutral-500">
-              No pinned notes yet.{' '}
-              <button
-                onClick={handleAddQuickNote}
-                className="font-bold underline text-amber-600 cursor-pointer"
-              >
-                + Add one
-              </button>
+              {/* Widget Footer */}
+              <div className="pt-2 border-t border-black/5 flex items-center justify-between text-[10px] text-neutral-400 mt-2">
+                <button
+                  onClick={onOpenFullNotes}
+                  className="hover:underline font-bold text-indigo-600 flex items-center gap-1 cursor-pointer"
+                >
+                  View All Sticky Notes →
+                </button>
+                <span>{new Date(activeNote.updated_at).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}</span>
+              </div>
             </div>
           )}
         </div>
