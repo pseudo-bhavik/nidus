@@ -48,6 +48,7 @@ export default function WhiteboardCanvas({
   // Document multi-tab management
   const [docs, setDocs] = useState<WhiteboardCanvasDoc[]>([]);
   const [activeDocId, setActiveDocId] = useState<string>('doc-default');
+  const [isDataLoaded, setIsDataLoaded] = useState<boolean>(false);
   const [isRenaming, setIsRenaming] = useState(false);
   const [renameTitle, setRenameTitle] = useState('');
   const [canvasTheme, setCanvasTheme] = useState<'light' | 'dark'>('light');
@@ -98,6 +99,7 @@ export default function WhiteboardCanvas({
             setDocs([mappedSingle]);
             setActiveDocId(mappedSingle.id);
             setIsSharedMode(true);
+            setIsDataLoaded(true);
             return;
           }
         } catch (err) {}
@@ -124,6 +126,7 @@ export default function WhiteboardCanvas({
 
           setDocs(mappedDocs);
           setActiveDocId(mappedDocs[0].id);
+          setIsDataLoaded(true);
           return;
         }
       } catch (err) {}
@@ -136,6 +139,7 @@ export default function WhiteboardCanvas({
           if (Array.isArray(parsed) && parsed.length > 0 && isMounted) {
             setDocs(parsed);
             setActiveDocId(parsed[0].id);
+            setIsDataLoaded(true);
             return;
           }
         }
@@ -144,6 +148,7 @@ export default function WhiteboardCanvas({
       if (isMounted) {
         setDocs([DEFAULT_DOC]);
         setActiveDocId(DEFAULT_DOC.id);
+        setIsDataLoaded(true);
       }
     };
 
@@ -205,9 +210,11 @@ export default function WhiteboardCanvas({
     };
   };
 
-  // Debounced save: called by Excalidraw's onChange
+  // Debounced save: called by Excalidraw's onChange ONLY after initial data is loaded
   const handleExcalidrawChange = useCallback(
     (elements: readonly any[], appState: any) => {
+      if (!isDataLoaded) return; // Prevent overwriting stored canvas during initial mount
+
       if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
       saveTimerRef.current = setTimeout(() => {
         const mutableElements = [...elements];
@@ -234,7 +241,7 @@ export default function WhiteboardCanvas({
         });
       }, 300);
     },
-    [activeDocId]
+    [activeDocId, isDataLoaded]
   );
 
   // Document Tab Actions
@@ -338,7 +345,6 @@ export default function WhiteboardCanvas({
     const [moved] = reordered.splice(draggedTabIdx, 1);
     reordered.splice(dropIdx, 0, moved);
 
-    setDocs(reordered);
     saveDocsToStorage(reordered);
     setDraggedTabIdx(null);
     setDragOverTabIdx(null);
@@ -660,17 +666,26 @@ export default function WhiteboardCanvas({
 
       {/* Excalidraw Canvas — Full Size Container */}
       <div className="flex-1 w-full relative overflow-hidden touch-none">
-        <ExcalidrawWrapper
-          key={excalidrawKey}
-          initialElements={activeDoc.elementsData || []}
-          initialAppState={{
-            theme: canvasTheme,
-            viewBackgroundColor: canvasTheme === 'dark' ? '#121212' : '#ffffff',
-          }}
-          theme={canvasTheme}
-          onApiReady={setExcalidrawAPI}
-          onChange={handleExcalidrawChange}
-        />
+        {isDataLoaded ? (
+          <ExcalidrawWrapper
+            key={`${activeDocId}-${excalidrawKey}`}
+            initialElements={activeDoc.elementsData || []}
+            initialAppState={{
+              theme: canvasTheme,
+              viewBackgroundColor: canvasTheme === 'dark' ? '#121212' : '#ffffff',
+            }}
+            theme={canvasTheme}
+            onApiReady={setExcalidrawAPI}
+            onChange={handleExcalidrawChange}
+          />
+        ) : (
+          <div className="flex items-center justify-center w-full h-full bg-neutral-50">
+            <div className="flex flex-col items-center gap-3 text-neutral-400">
+              <div className="w-8 h-8 border-2 border-neutral-300 border-t-indigo-500 rounded-full animate-spin" />
+              <span className="text-sm font-medium">Loading Canvas...</span>
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );
