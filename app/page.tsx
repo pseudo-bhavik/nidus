@@ -64,9 +64,35 @@ const SEED_BOOKMARKS: Bookmark[] = [
   },
 ];
 
-export default function Dashboard() {
+export default function Dashboard({ initialView }: { initialView?: ViewType } = {}) {
   const [bookmarks, setBookmarks] = useState<Bookmark[]>([]);
-  const [currentView, setCurrentView] = useState<ViewType>('all');
+  const [currentView, setCurrentView] = useState<ViewType>(initialView || 'all');
+
+  const handleViewChange = useCallback((view: ViewType) => {
+    setCurrentView(view);
+    if (typeof window === 'undefined') return;
+    let targetPath = '/';
+    if (view === 'sticky-notes') targetPath = '/stickynotes';
+    else if (view === 'canvas') targetPath = '/whiteboard';
+
+    const search = window.location.search;
+    if (window.location.pathname.toLowerCase() !== targetPath) {
+      window.history.pushState(null, '', targetPath + search);
+    }
+  }, []);
+
+  // Sync route on mount
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const path = window.location.pathname.toLowerCase();
+    if (path.startsWith('/stickynotes') || path.startsWith('/sticky-notes')) {
+      setCurrentView('sticky-notes');
+    } else if (path.startsWith('/whiteboard') || path.startsWith('/canvas')) {
+      setCurrentView('canvas');
+    } else if (initialView) {
+      setCurrentView(initialView);
+    }
+  }, [initialView]);
   const [searchQuery, setSearchQuery] = useState('');
   const [activeBookmark, setActiveBookmark] = useState<Bookmark | null>(null);
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
@@ -1084,7 +1110,7 @@ export default function Dashboard() {
         <LeftSidebar
           currentView={currentView}
           onViewChange={(view) => {
-            setCurrentView(view);
+            handleViewChange(view);
             setSelectedIds([]);
           }}
           bookmarks={bookmarks}
@@ -1166,7 +1192,7 @@ export default function Dashboard() {
             onToggleHighPriority={() => setHighPriorityOnly(!highPriorityOnly)}
             activeDensity={activeDensity}
             activeHighlightStyle={activeHighlightStyle}
-            onOpenStickyNotes={() => setCurrentView('sticky-notes')}
+            onOpenStickyNotes={() => handleViewChange('sticky-notes')}
           />
         )}
       </div>
@@ -1188,7 +1214,7 @@ export default function Dashboard() {
         onClose={() => setIsCommandPaletteOpen(false)}
         bookmarks={bookmarks}
         onNavigateView={(view) => {
-          setCurrentView(view);
+          handleViewChange(view);
           setSelectedIds([]);
         }}
         selectedCount={selectedIds.length}
