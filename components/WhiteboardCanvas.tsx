@@ -1,11 +1,29 @@
 'use client';
 
 import React, { useState, useEffect, useCallback, useRef } from 'react';
+import dynamic from 'next/dynamic';
 import {
   PenTool, Plus, Trash2, Edit2, Download, Moon, Sun,
   Maximize2, Minimize2, Check, PanelLeftOpen
 } from 'lucide-react';
 import { WhiteboardCanvasDoc } from '../lib/types';
+
+// Dynamically import Excalidraw with SSR completely disabled
+// This prevents any window/document access during server-side rendering
+const ExcalidrawWrapper = dynamic(
+  () => import('./ExcalidrawWrapper'),
+  {
+    ssr: false,
+    loading: () => (
+      <div className="flex items-center justify-center w-full h-full bg-neutral-50">
+        <div className="flex flex-col items-center gap-3 text-neutral-400">
+          <div className="w-8 h-8 border-2 border-neutral-300 border-t-indigo-500 rounded-full animate-spin" />
+          <span className="text-sm font-medium">Loading Excalidraw...</span>
+        </div>
+      </div>
+    ),
+  }
+);
 
 interface WhiteboardCanvasProps {
   activeTheme?: string;
@@ -35,23 +53,17 @@ export default function WhiteboardCanvas({
   const [canvasTheme, setCanvasTheme] = useState<'light' | 'dark'>('light');
   const [isFullScreen, setIsFullScreen] = useState(false);
 
-  // Excalidraw dynamic import state (must be loaded client-side only)
-  const [ExcalidrawComp, setExcalidrawComp] = useState<any>(null);
+  // Excalidraw API ref
   const [excalidrawAPI, setExcalidrawAPI] = useState<any>(null);
 
-  // Track if initial data has been loaded for the current doc
+  // Track loaded doc & debounce save
   const initialDataLoadedRef = useRef<string | null>(null);
-  // Debounce save timer
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  // 1. Dynamic import of Excalidraw (client-side only, no SSR)
-  useEffect(() => {
-    import('@excalidraw/excalidraw').then((mod) => {
-      setExcalidrawComp(() => mod.Excalidraw);
-    });
-  }, []);
+  // Key to force re-mount Excalidraw when switching tabs
+  const [excalidrawKey, setExcalidrawKey] = useState(0);
 
-  // 2. Load saved canvas tabs from localStorage
+  // 1. Load saved canvas tabs from localStorage
   useEffect(() => {
     try {
       const saved = localStorage.getItem('nidus_whiteboard_docs');
@@ -68,26 +80,6 @@ export default function WhiteboardCanvas({
     setActiveDocId(DEFAULT_DOC.id);
   }, []);
 
-  // 3. When switching tabs, load that doc's data into Excalidraw via updateScene
-  useEffect(() => {
-    if (!excalidrawAPI || !activeDocId) return;
-    // Prevent double-loading on initial mount
-    if (initialDataLoadedRef.current === activeDocId) return;
-    initialDataLoadedRef.current = activeDocId;
-
-    const doc = docs.find((d) => d.id === activeDocId);
-    if (doc) {
-      excalidrawAPI.updateScene({
-        elements: doc.elementsData || [],
-        appState: {
-          ...(doc.appStateData || {}),
-          theme: canvasTheme,
-        },
-      });
-      excalidrawAPI.scrollToContent();
-    }
-  }, [activeDocId, excalidrawAPI]);
-
   // LocalStorage persistence helpers
   const saveDocsToStorage = (updatedDocs: WhiteboardCanvasDoc[]) => {
     setDocs(updatedDocs);
@@ -100,15 +92,16 @@ export default function WhiteboardCanvas({
 
   // Debounced save: called by Excalidraw's onChange
   const handleExcalidrawChange = useCallback(
-    (elements: any[], appState: any) => {
+    (elements: readonly any[], appState: any) => {
       if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
       saveTimerRef.current = setTimeout(() => {
+        const mutableElements = [...elements]; // Convert readonly to mutable
         setDocs((prev) => {
           const updated = prev.map((d) =>
             d.id === activeDocId
               ? {
                   ...d,
-                  elementsData: elements,
+                  elementsData: mutableElements,
                   appStateData: appState,
                   updated_at: new Date().toISOString(),
                 }
@@ -126,6 +119,21 @@ export default function WhiteboardCanvas({
 
   // Document tab actions
   const handleCreateDoc = () => {
+    // Save current doc state before switching
+    if (excalidrawAPI) {
+      const currentElements = excalidrawAPI.getSceneElements();
+      const currentAppState = excalidrawAPI.getAppState();
+      setDocs((prev) => {
+        const updated = prev.map((d) =>
+          d.id === activeDocId
+            ? { ...d, elementsData: currentElements, appStateData: currentAppState, updated_at: new Date().toISOString() }
+            : d
+        );
+        try { localStorage.setItem('nidus_whiteboard_docs', JSON.stringify(updated)); } catch (e) {}
+        return updated;
+      });
+    }
+
     const newDoc: WhiteboardCanvasDoc = {
       id: 'doc-' + Date.now().toString(36) + Math.random().toString(36).substring(2, 6),
       title: `Canvas Note ${docs.length + 1}`,
@@ -136,20 +144,38 @@ export default function WhiteboardCanvas({
     };
     const updated = [newDoc, ...docs];
     saveDocsToStorage(updated);
-    initialDataLoadedRef.current = null; // Force reload
     setActiveDocId(newDoc.id);
+    setExcalidrawAPI(null);
+    setExcalidrawKey((k) => k + 1); // Force remount
   };
 
   const handleSwitchDoc = (docId: string) => {
     if (docId === activeDocId) return;
-    initialDataLoadedRef.current = null; // Force reload for new doc
+
+    // Save current doc state before switching
+    if (excalidrawAPI) {
+      const currentElements = excalidrawAPI.getSceneElements();
+      const currentAppState = excalidrawAPI.getAppState();
+      setDocs((prev) => {
+        const updated = prev.map((d) =>
+          d.id === activeDocId
+            ? { ...d, elementsData: currentElements, appStateData: currentAppState, updated_at: new Date().toISOString() }
+            : d
+        );
+        try { localStorage.setItem('nidus_whiteboard_docs', JSON.stringify(updated)); } catch (e) {}
+        return updated;
+      });
+    }
+
     setActiveDocId(docId);
+    setExcalidrawAPI(null);
+    setExcalidrawKey((k) => k + 1); // Force remount with new doc's data
   };
 
   const handleDeleteDoc = (id: string, e: React.MouseEvent) => {
     e.stopPropagation();
     if (docs.length <= 1) {
-      // Clear the single doc instead of deleting
+      // Clear the single remaining doc
       if (excalidrawAPI) {
         excalidrawAPI.resetScene();
       }
@@ -162,8 +188,9 @@ export default function WhiteboardCanvas({
     const updated = docs.filter((d) => d.id !== id);
     saveDocsToStorage(updated);
     if (activeDocId === id) {
-      initialDataLoadedRef.current = null;
       setActiveDocId(updated[0].id);
+      setExcalidrawAPI(null);
+      setExcalidrawKey((k) => k + 1);
     }
   };
 
@@ -342,35 +369,17 @@ export default function WhiteboardCanvas({
 
       {/* Excalidraw Canvas — Full Size */}
       <div className="flex-1 w-full relative overflow-hidden">
-        {ExcalidrawComp ? (
-          <ExcalidrawComp
-            excalidrawAPI={(api: any) => setExcalidrawAPI(api)}
-            initialData={{
-              elements: activeDoc.elementsData || [],
-              appState: {
-                theme: canvasTheme,
-                viewBackgroundColor: canvasTheme === 'dark' ? '#121212' : '#ffffff',
-              },
-              scrollToContent: true,
-            }}
-            onChange={handleExcalidrawChange}
-            theme={canvasTheme}
-            UIOptions={{
-              canvasActions: {
-                loadScene: false,
-                saveToActiveFile: false,
-                toggleTheme: false,
-              },
-            }}
-          />
-        ) : (
-          <div className="flex items-center justify-center w-full h-full bg-neutral-50">
-            <div className="flex flex-col items-center gap-3 text-neutral-400">
-              <div className="w-8 h-8 border-2 border-neutral-300 border-t-indigo-500 rounded-full animate-spin" />
-              <span className="text-sm font-medium">Loading Excalidraw...</span>
-            </div>
-          </div>
-        )}
+        <ExcalidrawWrapper
+          key={excalidrawKey}
+          initialElements={activeDoc.elementsData || []}
+          initialAppState={{
+            theme: canvasTheme,
+            viewBackgroundColor: canvasTheme === 'dark' ? '#121212' : '#ffffff',
+          }}
+          theme={canvasTheme}
+          onApiReady={setExcalidrawAPI}
+          onChange={handleExcalidrawChange}
+        />
       </div>
     </div>
   );
