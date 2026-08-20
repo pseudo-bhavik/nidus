@@ -192,9 +192,16 @@ export default function SettingsModal({
                 </div>
 
                 <div>
-                  <h4 className="font-bold text-neutral-800 mb-1">7. Vim Hotkeys & Command Console</h4>
+                  <h4 className="font-bold text-neutral-800 mb-1">7. Link Vault & Multi-Level Folders</h4>
+                  <p className="mb-2">
+                    Store large batches of links and resources without cluttering your primary bookmarks view. Organize links into <strong>collapsible color-coded sections and nested subfolders</strong> (e.g. <em>AI Tools → Related Stuff → Subfolders</em>). Supports <strong>Bulk Paste</strong>, <strong>HTML/JSON browser bookmark imports</strong> (preserving folder hierarchy), background metadata auto-scraping, and bulk multi-selection deletion.
+                  </p>
+                </div>
+
+                <div>
+                  <h4 className="font-bold text-neutral-800 mb-1">8. Vim Hotkeys, Right-Click Menus & Command Console</h4>
                   <p>
-                    Navigate links instantly using Vim navigation keys: press <strong>j</strong> to move down and <strong>k</strong> to move up. Perform bulk actions using selection checkboxes. Press <strong>Cmd+K</strong> (or <strong>Ctrl+K</strong>) to open the Command Palette to find and execute actions instantly.
+                    Navigate links instantly using Vim navigation keys (<strong>j</strong> / <strong>k</strong>). <strong>Right-click</strong> any bookmark, vault link, or folder header to open an instant action menu (Open, Copy, Re-scrape, Add Subfolder, Rename, Delete). Press <strong>Cmd+K</strong> (or <strong>Ctrl+K</strong>) to open the Command Palette to navigate views and execute actions instantly.
                   </p>
                 </div>
               </div>
@@ -276,15 +283,15 @@ export default function SettingsModal({
               <div className="flex flex-col gap-3">
                 <h3 className="font-bold text-neutral-800 text-sm mb-1.5 flex items-center gap-1.5">
                   <Keyboard className="w-4 h-4 text-hn-orange" style={{ color: 'var(--accent-color)' }} />
-                  <span>Vim-style Keyboard Shortcuts Reference</span>
+                  <span>Vim & Navigation Shortcuts Reference</span>
                 </h3>
 
                 <div className="border border-neutral-150 rounded-lg overflow-hidden">
                   <table className="w-full text-left border-collapse">
                     <thead>
                       <tr className="bg-neutral-50 border-b border-neutral-150 font-bold text-neutral-700">
-                        <th className="px-3 py-2">Shortcut key</th>
-                        <th className="px-3 py-2">Triggered Action</th>
+                        <th className="px-3 py-2">Shortcut / Action</th>
+                        <th className="px-3 py-2">Triggered Function</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-neutral-100 font-bold text-neutral-600">
@@ -318,11 +325,19 @@ export default function SettingsModal({
                       </tr>
                       <tr>
                         <td className="px-3 py-2 font-mono text-neutral-800"><kbd className="bg-neutral-100 border border-neutral-200 rounded px-1.5 py-0.5">Cmd + K</kbd> / <kbd className="bg-neutral-100 border border-neutral-200 rounded px-1.5 py-0.5">Ctrl + K</kbd></td>
-                        <td className="px-3 py-2">Toggle the Command Palette Overlay</td>
+                        <td className="px-3 py-2">Toggle the Command Palette Overlay (All Views, Vault & Shortcuts)</td>
                       </tr>
                       <tr>
                         <td className="px-3 py-2 font-mono text-neutral-800"><kbd className="bg-neutral-100 border border-neutral-200 rounded px-1.5 py-0.5">Esc</kbd></td>
-                        <td className="px-3 py-2">Unfocus input text, hide inspector, or close active modals</td>
+                        <td className="px-3 py-2">Unfocus input text, clear selection, hide inspector, or close modals</td>
+                      </tr>
+                      <tr>
+                        <td className="px-3 py-2 font-mono text-neutral-800"><span className="text-[11px] font-semibold text-neutral-700">Right-Click (Link)</span></td>
+                        <td className="px-3 py-2">Open instant Link context menu (Open, Copy Link, Re-scrape, Delete)</td>
+                      </tr>
+                      <tr>
+                        <td className="px-3 py-2 font-mono text-neutral-800"><span className="text-[11px] font-semibold text-neutral-700">Right-Click (Folder)</span></td>
+                        <td className="px-3 py-2">Open Folder context menu (Add Subfolder, Bulk Paste, Rename, Delete)</td>
                       </tr>
                     </tbody>
                   </table>
