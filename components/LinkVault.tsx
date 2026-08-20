@@ -4,7 +4,8 @@ import React, { useState, useEffect, useRef, useCallback } from 'react';
 import {
   Archive, Plus, Search, X, ChevronDown, ChevronRight,
   ExternalLink, Copy, Check, Trash2, Edit2, GripVertical,
-  Link as LinkIcon, ClipboardPaste, MoreHorizontal, RefreshCw
+  Link as LinkIcon, ClipboardPaste, MoreHorizontal, RefreshCw, Clock, Globe,
+  Upload, Download, FileText, CheckCircle, AlertTriangle
 } from 'lucide-react';
 import { VaultSection, VaultLink } from '../lib/types';
 
@@ -45,6 +46,15 @@ function getDomain(url: string): string {
   }
 }
 
+interface ScrapedMetadata {
+  title: string;
+  description: string | null;
+  domain: string;
+  thumbnail_url: string | null;
+  favicon_url: string | null;
+  read_time_minutes: number;
+}
+
 interface LinkVaultProps {
   isSidebarOpen?: boolean;
   onOpenSidebar?: () => void;
@@ -55,6 +65,8 @@ export default function LinkVault({ isSidebarOpen, onOpenSidebar }: LinkVaultPro
   const [isLoaded, setIsLoaded] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [copiedLinkId, setCopiedLinkId] = useState<string | null>(null);
+  const [scrapingLinkIds, setScrapingLinkIds] = useState<Set<string>>(new Set());
+  const [scrapingProgress, setScrapingProgress] = useState<{ current: number; total: number } | null>(null);
 
   // Section creation
   const [isCreatingSection, setIsCreatingSection] = useState(false);
@@ -72,6 +84,13 @@ export default function LinkVault({ isSidebarOpen, onOpenSidebar }: LinkVaultPro
   const [bulkPasteSection, setBulkPasteSection] = useState<string | null>(null);
   const [bulkPasteText, setBulkPasteText] = useState('');
   const [isBulkAdding, setIsBulkAdding] = useState(false);
+
+  // Import Modal & State
+  const [isImportModalOpen, setIsImportModalOpen] = useState(false);
+  const [importStatus, setImportStatus] = useState<'idle' | 'parsing' | 'saving' | 'success' | 'error'>('idle');
+  const [importStats, setImportStats] = useState<{ sectionsCount: number; linksCount: number }>({ sectionsCount: 0, linksCount: 0 });
+  const [importError, setImportError] = useState('');
+  const importFileInputRef = useRef<HTMLInputElement>(null);
 
   // Section rename
   const [renamingSectionId, setRenamingSectionId] = useState<string | null>(null);
@@ -109,6 +128,312 @@ export default function LinkVault({ isSidebarOpen, onOpenSidebar }: LinkVaultPro
       localStorage.setItem(STORAGE_KEY, JSON.stringify(updated));
     } catch (e) {}
   }, []);
+
+  // ── Scraper Helper (POST /api/scrape) ─────────────────────────
+
+  const fetchLinkMetadata = async (rawUrl: string): Promise<ScrapedMetadata> => {
+    let url = rawUrl.trim();
+    if (!url.startsWith('http://') && !url.startsWith('https://')) {
+      url = 'https://' + url;
+    }
+
+    try {
+      const res = await fetch('/api/scrape', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ url }),
+      });
+
+      if (res.ok) {
+        const data = await res.json();
+        return {
+          title: data.title || getDomain(url),
+          description: data.description || null,
+          domain: data.domain || getDomain(url),
+          thumbnail_url: data.thumbnailUrl || null,
+          favicon_url: data.faviconUrl || getFaviconUrl(url),
+          read_time_minutes: data.readTimeMinutes || 1,
+        };
+      }
+    } catch (e) {
+      console.warn(`Scrape failed for ${url}:`, e);
+    }
+
+    return {
+      title: getDomain(url),
+      description: null,
+      domain: getDomain(url),
+      thumbnail_url: null,
+      favicon_url: getFaviconUrl(url),
+      read_time_minutes: 1,
+    };
+  };
+
+  // ── Import Bookmarks into Vault Sections ──────────────────────
+
+  const parseNetscapeHTML = (htmlText: string): { url: string; title: string; category?: string }[] => {
+    const links: { url: string; title: string; category?: string }[] = [];
+    const tagRegex = /(<h3[^>]*>.*?<\/h3>|<dl[^>]*>|<\/dl>|<a\s+[^>]*>.*?<\/a>)/gi;
+    const folderStack: string[] = [];
+    let pendingFolderName: string | null = null;
+    let match;
+
+    while ((match = tagRegex.exec(htmlText)) !== null) {
+      const tagContent = match[0];
+      if (/<h3/i.test(tagContent)) {
+        const h3Inner = tagContent.match(/<h3[^>]*>(.*?)<\/h3>/i);
+        if (h3Inner) {
+          pendingFolderName = h3Inner[1].replace(/<[^>]*>/g, '').trim();
+        }
+      } else if (/<dl/i.test(tagContent)) {
+        if (pendingFolderName) {
+          folderStack.push(pendingFolderName);
+          pendingFolderName = null;
+        } else {
+          folderStack.push(folderStack.length === 0 ? 'General Links' : folderStack[folderStack.length - 1]);
+        }
+      } else if (/<\/dl/i.test(tagContent)) {
+        folderStack.pop();
+      } else if (/<a/i.test(tagContent)) {
+        const hrefMatch = tagContent.match(/href="([^"]*)"/i) || tagContent.match(/href='([^']*)'/i);
+        const titleMatch = tagContent.match(/>(.*?)<\/a>/i);
+        const url = hrefMatch ? hrefMatch[1] : '';
+        const title = titleMatch ? titleMatch[1].replace(/<[^>]*>/g, '').trim() : '';
+
+        if (url && (url.startsWith('http://') || url.startsWith('https://'))) {
+          let category = folderStack[folderStack.length - 1] || 'General Links';
+          if (
+            category === 'Bookmarks Bar' ||
+            category === 'Bookmarks' ||
+            category === 'Other Bookmarks' ||
+            category === 'Mobile Bookmarks' ||
+            category === 'Bookmarks menu' ||
+            category === 'BookmarksMenu'
+          ) {
+            category = 'General Links';
+          }
+          links.push({ url, title: title || url, category });
+        }
+      }
+    }
+    return links;
+  };
+
+  const parseJSONBookmarks = (jsonText: string): { url: string; title: string; category?: string }[] => {
+    const data = JSON.parse(jsonText);
+    const links: { url: string; title: string; category?: string }[] = [];
+
+    const traverse = (node: any, currentFolder: string) => {
+      if (!node) return;
+      if (node.type === 'folder' || node.children) {
+        const folderName = node.name || node.title || currentFolder;
+        const cleanFolder = (
+          folderName === 'Bookmarks bar' ||
+          folderName === 'Other bookmarks' ||
+          folderName === 'Synced bookmarks' ||
+          folderName === 'Bookmarks'
+        ) ? 'General Links' : folderName;
+
+        if (Array.isArray(node.children)) {
+          node.children.forEach((child: any) => traverse(child, cleanFolder));
+        }
+      } else if (node.url) {
+        links.push({
+          url: node.url,
+          title: node.name || node.title || node.url,
+          category: currentFolder || 'General Links',
+        });
+      }
+    };
+
+    if (Array.isArray(data)) {
+      data.forEach((item) => {
+        if (item.url) {
+          links.push({
+            url: item.url,
+            title: item.title || item.name || item.url,
+            category: item.category || item.folder || 'General Links',
+          });
+        } else if (item.children) {
+          traverse(item, 'General Links');
+        }
+      });
+    } else if (data.roots) {
+      Object.keys(data.roots).forEach((key) => {
+        traverse(data.roots[key], key);
+      });
+    } else if (data.children) {
+      traverse(data, 'General Links');
+    }
+
+    return links;
+  };
+
+  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    setImportStatus('parsing');
+    setImportError('');
+
+    try {
+      const text = await file.text();
+      let parsedLinks: { url: string; title: string; category?: string }[] = [];
+
+      if (file.name.endsWith('.html') || file.name.endsWith('.htm') || text.includes('<!DOCTYPE NETSCAPE-Bookmark-file-1>')) {
+        parsedLinks = parseNetscapeHTML(text);
+      } else if (file.name.endsWith('.json') || text.trim().startsWith('{') || text.trim().startsWith('[')) {
+        parsedLinks = parseJSONBookmarks(text);
+      } else {
+        parsedLinks = text
+          .split('\n')
+          .map((l) => l.trim())
+          .filter((l) => l.startsWith('http://') || l.startsWith('https://'))
+          .map((url) => ({ url, title: getDomain(url), category: 'Imported Links' }));
+      }
+
+      if (parsedLinks.length === 0) {
+        throw new Error('No valid bookmark links found in the uploaded file.');
+      }
+
+      setImportStatus('saving');
+
+      // Group parsed links by category/folder
+      const grouped: Record<string, VaultLink[]> = {};
+      const allNewLinkItems: { sectionId: string; linkId: string; url: string }[] = [];
+
+      parsedLinks.forEach((item) => {
+        const catName = (item.category || 'General Links').trim();
+        if (!grouped[catName]) {
+          grouped[catName] = [];
+        }
+        const linkId = generateId('vlink');
+        const vLink: VaultLink = {
+          id: linkId,
+          url: item.url,
+          title: item.title || getDomain(item.url),
+          description: null,
+          domain: getDomain(item.url),
+          thumbnail_url: null,
+          favicon_url: getFaviconUrl(item.url),
+          read_time_minutes: 1,
+          created_at: new Date().toISOString(),
+        };
+        grouped[catName].push(vLink);
+      });
+
+      let updatedSections = [...sections];
+
+      Object.entries(grouped).forEach(([catName, links]) => {
+        const existingSectionIdx = updatedSections.findIndex((s) => s.title.toLowerCase() === catName.toLowerCase());
+        if (existingSectionIdx >= 0) {
+          const targetSection = updatedSections[existingSectionIdx];
+          const existingUrls = new Set(targetSection.links.map((l) => l.url));
+          const uniqueLinksToAdd = links.filter((l) => !existingUrls.has(l.url));
+          
+          uniqueLinksToAdd.forEach((l) => {
+            allNewLinkItems.push({ sectionId: targetSection.id, linkId: l.id, url: l.url });
+          });
+
+          updatedSections[existingSectionIdx] = {
+            ...targetSection,
+            links: [...targetSection.links, ...uniqueLinksToAdd],
+            updated_at: new Date().toISOString(),
+          };
+        } else {
+          const newSectionId = generateId('vsec');
+          const color = SECTION_COLORS[(updatedSections.length) % SECTION_COLORS.length].id;
+          
+          links.forEach((l) => {
+            allNewLinkItems.push({ sectionId: newSectionId, linkId: l.id, url: l.url });
+          });
+
+          updatedSections.push({
+            id: newSectionId,
+            title: catName,
+            color,
+            links,
+            is_collapsed: false,
+            position: updatedSections.length,
+            created_at: new Date().toISOString(),
+            updated_at: new Date().toISOString(),
+          });
+        }
+      });
+
+      saveSections(updatedSections);
+      setImportStats({ sectionsCount: Object.keys(grouped).length, linksCount: parsedLinks.length });
+      setImportStatus('success');
+
+      // Trigger background scraper for all imported links
+      if (allNewLinkItems.length > 0) {
+        runBackgroundScraper(allNewLinkItems, updatedSections);
+      }
+    } catch (err: any) {
+      setImportStatus('error');
+      setImportError(err.message || 'Failed to parse bookmarks file.');
+    }
+  };
+
+  // Background Scraper Queue for imported/bulk links
+  const runBackgroundScraper = async (
+    items: { sectionId: string; linkId: string; url: string }[],
+    initialSections: VaultSection[]
+  ) => {
+    setScrapingProgress({ current: 0, total: items.length });
+    let currentSections = initialSections;
+
+    for (let i = 0; i < items.length; i++) {
+      const item = items[i];
+      setScrapingLinkIds((prev) => new Set(prev).add(item.linkId));
+      setScrapingProgress({ current: i + 1, total: items.length });
+
+      try {
+        const meta = await fetchLinkMetadata(item.url);
+        currentSections = currentSections.map((s) =>
+          s.id === item.sectionId
+            ? {
+                ...s,
+                links: s.links.map((l) =>
+                  l.id === item.linkId
+                    ? {
+                        ...l,
+                        title: meta.title || l.title,
+                        description: meta.description || l.description,
+                        domain: meta.domain || l.domain,
+                        thumbnail_url: meta.thumbnail_url || l.thumbnail_url,
+                        favicon_url: meta.favicon_url || l.favicon_url,
+                        read_time_minutes: meta.read_time_minutes || l.read_time_minutes,
+                      }
+                    : l
+                ),
+              }
+            : s
+        );
+        saveSections(currentSections);
+      } catch (err) {}
+
+      setScrapingLinkIds((prev) => {
+        const next = new Set(prev);
+        next.delete(item.linkId);
+        return next;
+      });
+    }
+
+    setScrapingProgress(null);
+  };
+
+  // ── Export Vault ──────────────────────────────────────────────
+
+  const handleExportVault = () => {
+    const dataStr = 'data:text/json;charset=utf-8,' + encodeURIComponent(JSON.stringify(sections, null, 2));
+    const downloadAnchor = document.createElement('a');
+    downloadAnchor.setAttribute('href', dataStr);
+    downloadAnchor.setAttribute('download', `nidus-link-vault-${new Date().toISOString().slice(0, 10)}.json`);
+    document.body.appendChild(downloadAnchor);
+    downloadAnchor.click();
+    downloadAnchor.remove();
+  };
 
   // ── Section CRUD ──────────────────────────────────────────────
 
@@ -155,18 +480,7 @@ export default function LinkVault({ isSidebarOpen, onOpenSidebar }: LinkVaultPro
     );
   };
 
-  // ── Link CRUD ─────────────────────────────────────────────────
-
-  const fetchLinkTitle = async (url: string): Promise<{ title: string; description?: string }> => {
-    try {
-      const res = await fetch(`/api/scrape?url=${encodeURIComponent(url)}`);
-      if (res.ok) {
-        const data = await res.json();
-        return { title: data.title || getDomain(url), description: data.description || '' };
-      }
-    } catch (e) {}
-    return { title: getDomain(url) };
-  };
+  // ── Single Link Add ───────────────────────────────────────────
 
   const handleAddLink = async (sectionId: string) => {
     const rawUrl = newLinkUrl.trim();
@@ -178,14 +492,17 @@ export default function LinkVault({ isSidebarOpen, onOpenSidebar }: LinkVaultPro
     }
 
     setIsFetchingTitle(true);
-    const { title, description } = await fetchLinkTitle(url);
+    const metadata = await fetchLinkMetadata(url);
 
     const newLink: VaultLink = {
       id: generateId('vlink'),
       url,
-      title,
-      description,
-      favicon_url: getFaviconUrl(url),
+      title: metadata.title,
+      description: metadata.description,
+      domain: metadata.domain,
+      thumbnail_url: metadata.thumbnail_url,
+      favicon_url: metadata.favicon_url,
+      read_time_minutes: metadata.read_time_minutes,
       created_at: new Date().toISOString(),
     };
 
@@ -200,6 +517,8 @@ export default function LinkVault({ isSidebarOpen, onOpenSidebar }: LinkVaultPro
     setIsFetchingTitle(false);
   };
 
+  // ── Bulk Paste ────────────────────────────────────────────────
+
   const handleBulkPaste = async (sectionId: string) => {
     const lines = bulkPasteText
       .split('\n')
@@ -209,41 +528,83 @@ export default function LinkVault({ isSidebarOpen, onOpenSidebar }: LinkVaultPro
     if (lines.length === 0) return;
     setIsBulkAdding(true);
 
-    const newLinks: VaultLink[] = [];
+    const initialLinks: VaultLink[] = [];
+    const rawUrlMap: { sectionId: string; linkId: string; url: string }[] = [];
+
     for (const line of lines) {
       let url = line;
-      // Try to extract URL from lines like "1. site.com • description"
-      const urlMatch = line.match(/(?:https?:\/\/)?[\w.-]+\.\w{2,}/);
+      const urlMatch = line.match(/(?:https?:\/\/)?[\w.-]+\.[a-zA-Z]{2,}(?:\/[^\s]*)?/);
       if (urlMatch) {
         url = urlMatch[0];
       }
       if (!url.startsWith('http://') && !url.startsWith('https://')) {
         url = 'https://' + url;
       }
-      // Extract description from bullet format: "domain • description"
-      const bulletParts = line.split('•').map((p) => p.trim());
+      const bulletParts = line.split(/[•\-–—]/).map((p) => p.trim());
       const desc = bulletParts.length > 1 ? bulletParts.slice(1).join(' • ') : undefined;
 
-      newLinks.push({
-        id: generateId('vlink'),
+      const linkId = generateId('vlink');
+      initialLinks.push({
+        id: linkId,
         url,
         title: getDomain(url),
-        description: desc,
+        description: desc || null,
+        domain: getDomain(url),
+        thumbnail_url: null,
         favicon_url: getFaviconUrl(url),
+        read_time_minutes: 1,
         created_at: new Date().toISOString(),
       });
+      rawUrlMap.push({ sectionId, linkId, url });
     }
 
-    saveSections(
-      sections.map((s) =>
-        s.id === sectionId
-          ? { ...s, links: [...s.links, ...newLinks], updated_at: new Date().toISOString() }
-          : s
-      )
+    const updatedWithInitial = sections.map((s) =>
+      s.id === sectionId
+        ? { ...s, links: [...s.links, ...initialLinks], updated_at: new Date().toISOString() }
+        : s
     );
+    saveSections(updatedWithInitial);
     setBulkPasteText('');
     setBulkPasteSection(null);
     setIsBulkAdding(false);
+
+    // Background scrape queue
+    runBackgroundScraper(rawUrlMap, updatedWithInitial);
+  };
+
+  const handleRescrapeLink = async (sectionId: string, linkId: string, url: string) => {
+    setScrapingLinkIds((prev) => new Set(prev).add(linkId));
+    try {
+      const meta = await fetchLinkMetadata(url);
+      saveSections(
+        sections.map((s) =>
+          s.id === sectionId
+            ? {
+                ...s,
+                links: s.links.map((l) =>
+                  l.id === linkId
+                    ? {
+                        ...l,
+                        title: meta.title,
+                        description: meta.description,
+                        domain: meta.domain,
+                        thumbnail_url: meta.thumbnail_url,
+                        favicon_url: meta.favicon_url,
+                        read_time_minutes: meta.read_time_minutes,
+                      }
+                    : l
+                ),
+                updated_at: new Date().toISOString(),
+              }
+            : s
+        )
+      );
+    } catch (err) {}
+    setScrapingLinkIds((prev) => {
+      const next = new Set(prev);
+      next.delete(linkId);
+      return next;
+    });
   };
 
   const handleDeleteLink = (sectionId: string, linkId: string) => {
@@ -298,7 +659,8 @@ export default function LinkVault({ isSidebarOpen, onOpenSidebar }: LinkVaultPro
       (l) =>
         l.title.toLowerCase().includes(q) ||
         l.url.toLowerCase().includes(q) ||
-        (l.description || '').toLowerCase().includes(q)
+        (l.description || '').toLowerCase().includes(q) ||
+        (l.domain || '').toLowerCase().includes(q)
     );
     if (matchesSection) return { ...section, is_collapsed: false };
     if (matchingLinks.length > 0) return { ...section, links: matchingLinks, is_collapsed: false };
@@ -351,11 +713,17 @@ export default function LinkVault({ isSidebarOpen, onOpenSidebar }: LinkVaultPro
             <span className="px-2 py-0.5 bg-neutral-100 border border-neutral-200 rounded-full text-[10px] font-bold text-neutral-600">
               {totalLinks} links
             </span>
+            {scrapingProgress && (
+              <div className="flex items-center gap-1.5 px-2 py-0.5 bg-indigo-50 border border-indigo-200 rounded-full text-[10px] font-bold text-indigo-700 animate-pulse">
+                <RefreshCw className="w-3 h-3 animate-spin" />
+                <span>Scraping {scrapingProgress.current}/{scrapingProgress.total}...</span>
+              </div>
+            )}
           </div>
         </div>
 
         <div className="flex items-center gap-2.5 flex-wrap">
-          {/* Search */}
+          {/* Search Input with Non-Overlapping Icon */}
           <div className="relative shrink-0">
             <Search className="w-3.5 h-3.5 absolute left-3 top-1/2 -translate-y-1/2 text-neutral-400 pointer-events-none" />
             <input
@@ -363,7 +731,8 @@ export default function LinkVault({ isSidebarOpen, onOpenSidebar }: LinkVaultPro
               placeholder="Search links..."
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
-              className="pl-9 pr-7 py-1 bg-neutral-100 border border-neutral-200 rounded-lg text-xs outline-none focus:bg-white focus:ring-2 focus:ring-indigo-500/20 text-neutral-800 w-36 sm:w-44 transition-all"
+              className="pr-7 py-1 bg-neutral-100 border border-neutral-200 rounded-lg text-xs outline-none focus:bg-white focus:ring-2 focus:ring-indigo-500/20 text-neutral-800 w-36 sm:w-48 transition-all"
+              style={{ paddingLeft: '2.25rem' }}
             />
             {searchQuery && (
               <button
@@ -375,6 +744,34 @@ export default function LinkVault({ isSidebarOpen, onOpenSidebar }: LinkVaultPro
               </button>
             )}
           </div>
+
+          {/* Import Bookmarks Button */}
+          <button
+            type="button"
+            onClick={() => {
+              setImportStatus('idle');
+              setImportError('');
+              setIsImportModalOpen(true);
+            }}
+            className="px-2.5 py-1.5 bg-neutral-100 hover:bg-neutral-200 text-neutral-700 rounded-lg font-bold text-xs flex items-center gap-1.5 cursor-pointer transition-all shadow-2xs shrink-0"
+            title="Import browser bookmark files (.html or .json) and organize into Vault sections"
+          >
+            <Upload className="w-3.5 h-3.5 text-neutral-500" />
+            <span className="hidden sm:inline">Import Bookmarks</span>
+          </button>
+
+          {/* Export Vault Button */}
+          {sections.length > 0 && (
+            <button
+              type="button"
+              onClick={handleExportVault}
+              className="px-2.5 py-1.5 bg-neutral-100 hover:bg-neutral-200 text-neutral-700 rounded-lg font-bold text-xs flex items-center gap-1.5 cursor-pointer transition-all shadow-2xs shrink-0"
+              title="Export Link Vault as JSON backup"
+            >
+              <Download className="w-3.5 h-3.5 text-neutral-500" />
+              <span className="hidden sm:inline">Export</span>
+            </button>
+          )}
 
           {/* New Section Button */}
           <button
@@ -447,19 +844,34 @@ export default function LinkVault({ isSidebarOpen, onOpenSidebar }: LinkVaultPro
               <p className="font-bold text-sm text-neutral-600 mb-1">
                 {searchQuery ? 'No matching links found' : 'Your Link Vault is empty'}
               </p>
-              <p className="text-xs text-neutral-400 max-w-xs leading-relaxed">
+              <p className="text-xs text-neutral-400 max-w-sm leading-relaxed mb-4">
                 {searchQuery
                   ? 'Try a different search term.'
-                  : 'Create sections to organize and store links you want to keep but don\'t need on your main bookmarks page.'}
+                  : 'Import your browser bookmarks file or create custom sections to organize links separately from your main dashboard.'}
               </p>
               {!searchQuery && (
-                <button
-                  type="button"
-                  onClick={() => setIsCreatingSection(true)}
-                  className="mt-4 px-4 py-2 bg-neutral-900 text-white text-xs font-bold rounded-lg cursor-pointer hover:bg-neutral-800 transition-all"
-                >
-                  + Create Your First Section
-                </button>
+                <div className="flex items-center justify-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setImportStatus('idle');
+                      setImportError('');
+                      setIsImportModalOpen(true);
+                    }}
+                    className="px-4 py-2 bg-neutral-100 text-neutral-800 text-xs font-bold rounded-lg cursor-pointer hover:bg-neutral-200 transition-all flex items-center gap-1.5 border border-neutral-200"
+                  >
+                    <Upload className="w-3.5 h-3.5" />
+                    <span>Import Bookmarks File</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setIsCreatingSection(true)}
+                    className="px-4 py-2 bg-neutral-900 text-white text-xs font-bold rounded-lg cursor-pointer hover:bg-neutral-800 transition-all flex items-center gap-1.5"
+                  >
+                    <Plus className="w-3.5 h-3.5" />
+                    <span>Create Section</span>
+                  </button>
+                </div>
               )}
             </div>
           </div>
@@ -577,62 +989,122 @@ export default function LinkVault({ isSidebarOpen, onOpenSidebar }: LinkVaultPro
                 {!isCollapsed && (
                   <div className="divide-y divide-neutral-100">
                     {/* Links */}
-                    {section.links.map((link) => (
-                      <div
-                        key={link.id}
-                        className="flex items-center gap-2.5 px-3 py-2 hover:bg-neutral-50/80 group transition-all"
-                      >
-                        {link.favicon_url ? (
-                          <img
-                            src={link.favicon_url}
-                            alt=""
-                            className="w-4 h-4 rounded shrink-0"
-                            onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }}
-                          />
-                        ) : (
-                          <LinkIcon className="w-4 h-4 text-neutral-300 shrink-0" />
-                        )}
+                    {section.links.map((link) => {
+                      const isScrapingThis = scrapingLinkIds.has(link.id);
 
-                        <div className="flex-1 min-w-0">
-                          <div className="text-xs font-semibold text-neutral-800 truncate">{link.title}</div>
-                          <div className="text-[10px] text-neutral-400 truncate">{getDomain(link.url)}</div>
-                        </div>
-
-                        {/* Link Actions */}
-                        <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity shrink-0">
-                          <a
-                            href={link.url}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            onClick={(e) => e.stopPropagation()}
-                            className="p-1 hover:bg-neutral-200/60 rounded text-neutral-400 hover:text-neutral-700 cursor-pointer"
-                            title="Open Link"
-                          >
-                            <ExternalLink className="w-3 h-3" />
-                          </a>
-                          <button
-                            type="button"
-                            onClick={() => handleCopyLink(link.id, link.url)}
-                            className="p-1 hover:bg-neutral-200/60 rounded text-neutral-400 hover:text-neutral-700 cursor-pointer"
-                            title="Copy Link"
-                          >
-                            {copiedLinkId === link.id ? (
-                              <Check className="w-3 h-3 text-emerald-500" />
+                      return (
+                        <div
+                          key={link.id}
+                          className="flex items-start gap-3 px-3 py-2.5 hover:bg-neutral-50/80 group transition-all"
+                        >
+                          {/* Favicon */}
+                          <div className="mt-0.5 shrink-0">
+                            {link.favicon_url ? (
+                              <img
+                                src={link.favicon_url}
+                                alt=""
+                                className="w-4 h-4 rounded shrink-0 object-contain"
+                                onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }}
+                              />
                             ) : (
-                              <Copy className="w-3 h-3" />
+                              <LinkIcon className="w-4 h-4 text-neutral-300" />
                             )}
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => handleDeleteLink(section.id, link.id)}
-                            className="p-1 hover:bg-red-100 rounded text-neutral-400 hover:text-red-600 cursor-pointer"
-                            title="Remove Link"
-                          >
-                            <Trash2 className="w-3 h-3" />
-                          </button>
+                          </div>
+
+                          {/* Link Info (Title, Domain, Description, Read Time) */}
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-center gap-2 flex-wrap">
+                              <a
+                                href={link.url}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="text-xs font-bold text-neutral-900 hover:text-indigo-600 transition-colors truncate max-w-full"
+                              >
+                                {link.title || getDomain(link.url)}
+                              </a>
+                              {link.domain && (
+                                <span className="inline-flex items-center gap-0.5 px-1.5 py-0.2 bg-neutral-100 border border-neutral-200 text-neutral-500 rounded text-[9px] font-medium shrink-0">
+                                  <Globe className="w-2.5 h-2.5 text-neutral-400" />
+                                  {link.domain}
+                                </span>
+                              )}
+                              {link.read_time_minutes ? (
+                                <span className="inline-flex items-center gap-0.5 px-1.5 py-0.2 bg-neutral-50 border border-neutral-200 text-neutral-400 rounded text-[9px] shrink-0">
+                                  <Clock className="w-2.5 h-2.5" />
+                                  {link.read_time_minutes} min
+                                </span>
+                              ) : null}
+                            </div>
+
+                            {/* Scraped Description */}
+                            {link.description && (
+                              <p className="text-[11px] text-neutral-500 mt-0.5 line-clamp-2 leading-relaxed font-normal">
+                                {link.description}
+                              </p>
+                            )}
+
+                            <div className="text-[10px] text-neutral-400 mt-0.5 truncate font-mono">
+                              {link.url}
+                            </div>
+                          </div>
+
+                          {/* Scraped Thumbnail Preview (if available) */}
+                          {link.thumbnail_url && (
+                            <div className="hidden sm:block shrink-0 w-16 h-11 rounded border border-neutral-200 overflow-hidden bg-neutral-100">
+                              <img
+                                src={link.thumbnail_url}
+                                alt=""
+                                className="w-full h-full object-cover"
+                                onError={(e) => { (e.target as HTMLElement).parentElement!.style.display = 'none'; }}
+                              />
+                            </div>
+                          )}
+
+                          {/* Link Actions */}
+                          <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity shrink-0 mt-0.5">
+                            <a
+                              href={link.url}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              onClick={(e) => e.stopPropagation()}
+                              className="p-1 hover:bg-neutral-200/60 rounded text-neutral-400 hover:text-neutral-700 cursor-pointer"
+                              title="Open Link"
+                            >
+                              <ExternalLink className="w-3.5 h-3.5" />
+                            </a>
+                            <button
+                              type="button"
+                              onClick={() => handleCopyLink(link.id, link.url)}
+                              className="p-1 hover:bg-neutral-200/60 rounded text-neutral-400 hover:text-neutral-700 cursor-pointer"
+                              title="Copy Link"
+                            >
+                              {copiedLinkId === link.id ? (
+                                <Check className="w-3.5 h-3.5 text-emerald-500" />
+                              ) : (
+                                <Copy className="w-3.5 h-3.5" />
+                              )}
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => handleRescrapeLink(section.id, link.id, link.url)}
+                              disabled={isScrapingThis}
+                              className="p-1 hover:bg-indigo-100 rounded text-neutral-400 hover:text-indigo-600 cursor-pointer disabled:opacity-50"
+                              title="Re-scrape Metadata"
+                            >
+                              <RefreshCw className={`w-3.5 h-3.5 ${isScrapingThis ? 'animate-spin text-indigo-500' : ''}`} />
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => handleDeleteLink(section.id, link.id)}
+                              className="p-1 hover:bg-red-100 rounded text-neutral-400 hover:text-red-600 cursor-pointer"
+                              title="Remove Link"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
                         </div>
-                      </div>
-                    ))}
+                      );
+                    })}
 
                     {/* Empty section state */}
                     {section.links.length === 0 && (
@@ -655,11 +1127,16 @@ export default function LinkVault({ isSidebarOpen, onOpenSidebar }: LinkVaultPro
                             if (e.key === 'Enter') handleAddLink(section.id);
                             if (e.key === 'Escape') { setAddingLinkToSection(null); setNewLinkUrl(''); }
                           }}
-                          placeholder="Paste URL and press Enter..."
+                          placeholder="Paste URL and press Enter (scraping metadata)..."
                           className="flex-1 text-xs bg-white border border-neutral-200 rounded px-2.5 py-1.5 outline-none focus:ring-2 focus:ring-indigo-500/20"
                           disabled={isFetchingTitle}
                         />
-                        {isFetchingTitle && <RefreshCw className="w-3.5 h-3.5 text-indigo-500 animate-spin shrink-0" />}
+                        {isFetchingTitle && (
+                          <div className="flex items-center gap-1 text-[10px] text-indigo-600 font-semibold shrink-0">
+                            <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                            <span>Scraping...</span>
+                          </div>
+                        )}
                         <button
                           type="button"
                           onClick={() => { setAddingLinkToSection(null); setNewLinkUrl(''); }}
@@ -691,13 +1168,16 @@ export default function LinkVault({ isSidebarOpen, onOpenSidebar }: LinkVaultPro
                     {/* Bulk Paste Modal (inline) */}
                     {bulkPasteSection === section.id && (
                       <div className="px-3 py-3 bg-neutral-50/80 border-t border-neutral-100 animate-fade-in">
-                        <h4 className="text-[11px] font-bold text-neutral-700 mb-2 flex items-center gap-1">
+                        <h4 className="text-[11px] font-bold text-neutral-700 mb-1 flex items-center gap-1">
                           <ClipboardPaste className="w-3 h-3" /> Bulk Paste Links
                         </h4>
+                        <p className="text-[10px] text-neutral-400 mb-2">
+                          Paste links (one per line). All rich metadata, titles, descriptions, and thumbnails will be scraped automatically!
+                        </p>
                         <textarea
                           value={bulkPasteText}
                           onChange={(e) => setBulkPasteText(e.target.value)}
-                          placeholder={"Paste one URL per line:\nraphael.ai\nkrea.ai\nmagnific.ai\n\nOr paste with descriptions:\nraphael.ai • AI image generation\nkrea.ai • real time image gen"}
+                          placeholder={"Paste one URL per line:\nraphael.ai\nkrea.ai\nmagnific.ai\n\nOr paste with descriptions:\n1. raphael.ai • unlimited AI image generation\n2. krea.ai • generate images in real time as you draw\n3. magnific.ai • AI image upscaling"}
                           rows={5}
                           className="w-full text-xs bg-white border border-neutral-200 rounded-md px-3 py-2 outline-none focus:ring-2 focus:ring-indigo-500/20 resize-none font-mono"
                         />
@@ -716,7 +1196,7 @@ export default function LinkVault({ isSidebarOpen, onOpenSidebar }: LinkVaultPro
                             className="px-3 py-1 text-xs font-bold bg-neutral-900 text-white hover:bg-neutral-800 rounded cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-1"
                           >
                             {isBulkAdding && <RefreshCw className="w-3 h-3 animate-spin" />}
-                            Add {bulkPasteText.split('\n').filter((l) => l.trim()).length} Links
+                            Add {bulkPasteText.split('\n').filter((l) => l.trim()).length} Links & Scrape Info
                           </button>
                         </div>
                       </div>
@@ -728,6 +1208,104 @@ export default function LinkVault({ isSidebarOpen, onOpenSidebar }: LinkVaultPro
           })}
         </div>
       </div>
+
+      {/* ── Import Bookmarks Modal ── */}
+      {isImportModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/35 backdrop-blur-xs animate-fade-in">
+          <div className="bg-white border border-neutral-200 rounded-lg shadow-2xl p-5 w-full max-w-md text-neutral-800 animate-scale-in">
+            <div className="flex items-center justify-between mb-3">
+              <div className="flex items-center gap-2">
+                <Upload className="w-4 h-4 text-indigo-600" />
+                <h3 className="font-bold text-sm">Import Bookmarks into Vault</h3>
+              </div>
+              <button
+                type="button"
+                onClick={() => setIsImportModalOpen(false)}
+                className="p-1 text-neutral-400 hover:text-neutral-600 rounded cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <p className="text-xs text-neutral-500 leading-relaxed mb-4">
+              Upload your exported browser bookmarks file (<strong>.html</strong> or <strong>.json</strong>).
+              Nidus will automatically create <strong>Vault Sections</strong> matching your browser's bookmark folders and start scraping rich metadata!
+            </p>
+
+            {/* Hidden native file input */}
+            <input
+              ref={importFileInputRef}
+              type="file"
+              accept=".html,.htm,.json,.txt"
+              onChange={handleFileUpload}
+              className="hidden"
+            />
+
+            {/* File Dropzone Button */}
+            {importStatus === 'idle' && (
+              <div
+                onClick={() => importFileInputRef.current?.click()}
+                className="border-2 border-dashed border-neutral-300 hover:border-indigo-500 bg-neutral-50/50 hover:bg-indigo-50/20 rounded-lg p-6 flex flex-col items-center justify-center text-center cursor-pointer transition-all mb-4"
+              >
+                <FileText className="w-8 h-8 text-neutral-400 mb-2" />
+                <span className="text-xs font-bold text-neutral-700 mb-1">Click to select bookmarks file</span>
+                <span className="text-[10px] text-neutral-400">Supports HTML bookmark exports from Chrome, Brave, Edge, Firefox, Safari, and JSON</span>
+              </div>
+            )}
+
+            {/* Parsing State */}
+            {importStatus === 'parsing' && (
+              <div className="p-6 flex flex-col items-center justify-center text-center gap-2 bg-neutral-50 rounded-lg mb-4">
+                <RefreshCw className="w-6 h-6 text-indigo-600 animate-spin" />
+                <span className="text-xs font-bold text-neutral-700">Reading & Parsing Bookmarks...</span>
+              </div>
+            )}
+
+            {/* Saving State */}
+            {importStatus === 'saving' && (
+              <div className="p-6 flex flex-col items-center justify-center text-center gap-2 bg-neutral-50 rounded-lg mb-4">
+                <RefreshCw className="w-6 h-6 text-emerald-600 animate-spin" />
+                <span className="text-xs font-bold text-neutral-700">Organizing into Vault Sections...</span>
+              </div>
+            )}
+
+            {/* Success State */}
+            {importStatus === 'success' && (
+              <div className="p-4 bg-emerald-50 border border-emerald-200 rounded-lg mb-4 flex items-start gap-3">
+                <CheckCircle className="w-5 h-5 text-emerald-600 shrink-0 mt-0.5" />
+                <div>
+                  <h4 className="text-xs font-bold text-emerald-900 mb-0.5">Import Completed!</h4>
+                  <p className="text-[11px] text-emerald-700 leading-relaxed">
+                    Successfully organized <strong>{importStats.linksCount} links</strong> into <strong>{importStats.sectionsCount} sections</strong>.
+                    Metadata and thumbnails are scraping in the background!
+                  </p>
+                </div>
+              </div>
+            )}
+
+            {/* Error State */}
+            {importStatus === 'error' && (
+              <div className="p-4 bg-red-50 border border-red-200 rounded-lg mb-4 flex items-start gap-3">
+                <AlertTriangle className="w-5 h-5 text-red-600 shrink-0 mt-0.5" />
+                <div>
+                  <h4 className="text-xs font-bold text-red-900 mb-0.5">Import Failed</h4>
+                  <p className="text-[11px] text-red-700 leading-relaxed">{importError}</p>
+                </div>
+              </div>
+            )}
+
+            <div className="flex items-center justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => setIsImportModalOpen(false)}
+                className="px-3 py-1.5 text-xs font-bold bg-neutral-900 text-white hover:bg-neutral-800 rounded-md cursor-pointer transition-all"
+              >
+                {importStatus === 'success' ? 'Done' : 'Cancel'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Section Delete Confirmation Modal */}
       {sectionToDelete && (

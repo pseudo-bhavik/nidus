@@ -41,8 +41,11 @@ export interface VaultLink {
   id: string;
   url: string;
   title: string;
-  description?: string;
-  favicon_url?: string;
+  description?: string | null;
+  domain?: string;
+  thumbnail_url?: string | null;
+  favicon_url?: string | null;
+  read_time_minutes?: number;
   created_at: string;
 }
 
