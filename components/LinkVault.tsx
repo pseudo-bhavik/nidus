@@ -5,7 +5,8 @@ import {
   Archive, Plus, Search, X, ChevronDown, ChevronRight,
   ExternalLink, Copy, Check, Trash2, Edit2, GripVertical,
   Link as LinkIcon, ClipboardPaste, MoreHorizontal, RefreshCw, Clock, Globe,
-  Upload, Download, FileText, CheckCircle, AlertTriangle, Folder, FolderOpen, FolderPlus
+  Upload, Download, FileText, CheckCircle, AlertTriangle, Folder, FolderOpen, FolderPlus,
+  CheckSquare, Square
 } from 'lucide-react';
 import { VaultSection, VaultLink } from '../lib/types';
 
@@ -57,6 +58,17 @@ function countTotalSectionLinks(section: VaultSection): number {
   return count;
 }
 
+// Gather all link IDs recursively in a section
+function getAllSectionLinkIds(section: VaultSection): string[] {
+  const ids = section.links.map((l) => l.id);
+  if (section.subsections && section.subsections.length > 0) {
+    section.subsections.forEach((sub) => {
+      ids.push(...getAllSectionLinkIds(sub));
+    });
+  }
+  return ids;
+}
+
 interface ScrapedMetadata {
   title: string;
   description: string | null;
@@ -78,6 +90,9 @@ export default function LinkVault({ isSidebarOpen, onOpenSidebar }: LinkVaultPro
   const [copiedLinkId, setCopiedLinkId] = useState<string | null>(null);
   const [scrapingLinkIds, setScrapingLinkIds] = useState<Set<string>>(new Set());
   const [scrapingProgress, setScrapingProgress] = useState<{ current: number; total: number } | null>(null);
+
+  // Bulk Selection State
+  const [selectedLinkIds, setSelectedLinkIds] = useState<Set<string>>(new Set());
 
   // Top Section creation
   const [isCreatingSection, setIsCreatingSection] = useState(false);
@@ -185,9 +200,8 @@ export default function LinkVault({ isSidebarOpen, onOpenSidebar }: LinkVaultPro
     };
   };
 
-  // ── Recursive Section Helpers ─────────────────────────────────
+  // ── Recursive Section Tree Helpers ────────────────────────────
 
-  // Deep update a section or subsection anywhere in the tree
   const updateSectionInTree = (
     tree: VaultSection[],
     targetId: string,
@@ -207,7 +221,6 @@ export default function LinkVault({ isSidebarOpen, onOpenSidebar }: LinkVaultPro
     });
   };
 
-  // Deep remove a section or subsection anywhere in the tree
   const deleteSectionFromTree = (tree: VaultSection[], targetId: string): VaultSection[] => {
     return tree
       .filter((sec) => sec.id !== targetId)
@@ -217,7 +230,84 @@ export default function LinkVault({ isSidebarOpen, onOpenSidebar }: LinkVaultPro
       }));
   };
 
-  // ── Import Bookmarks into Vault with Nested Subfolder Hierarchy ──
+  const updateLinkInTree = (
+    tree: VaultSection[],
+    linkId: string,
+    updater: (link: VaultLink) => VaultLink
+  ): VaultSection[] => {
+    return tree.map((sec) => ({
+      ...sec,
+      links: sec.links.map((l) => (l.id === linkId ? updater(l) : l)),
+      subsections: sec.subsections ? updateLinkInTree(sec.subsections, linkId, updater) : [],
+    }));
+  };
+
+  const deleteLinkInTree = (tree: VaultSection[], linkId: string): VaultSection[] => {
+    return tree.map((sec) => ({
+      ...sec,
+      links: sec.links.filter((l) => l.id !== linkId),
+      subsections: sec.subsections ? deleteLinkInTree(sec.subsections, linkId) : [],
+    }));
+  };
+
+  // ── Bulk Selection & Delete Handlers ──────────────────────────
+
+  const toggleSelectLink = (linkId: string, e?: React.MouseEvent) => {
+    if (e) e.stopPropagation();
+    setSelectedLinkIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(linkId)) {
+        next.delete(linkId);
+      } else {
+        next.add(linkId);
+      }
+      return next;
+    });
+  };
+
+  const toggleSelectSectionLinks = (section: VaultSection) => {
+    const sectionLinkIds = getAllSectionLinkIds(section);
+    const allSelected = sectionLinkIds.every((id) => selectedLinkIds.has(id));
+
+    setSelectedLinkIds((prev) => {
+      const next = new Set(prev);
+      if (allSelected) {
+        sectionLinkIds.forEach((id) => next.delete(id));
+      } else {
+        sectionLinkIds.forEach((id) => next.add(id));
+      }
+      return next;
+    });
+  };
+
+  const handleBulkDeleteSelected = () => {
+    if (selectedLinkIds.size === 0) return;
+    const idsToDelete = new Set(selectedLinkIds);
+
+    const removeSelected = (tree: VaultSection[]): VaultSection[] => {
+      return tree.map((sec) => ({
+        ...sec,
+        links: sec.links.filter((l) => !idsToDelete.has(l.id)),
+        subsections: sec.subsections ? removeSelected(sec.subsections) : [],
+      }));
+    };
+
+    const updated = removeSelected(sections);
+    saveSections(updated);
+    setSelectedLinkIds(new Set());
+  };
+
+  const handleDeleteAllSectionLinks = (sectionId: string) => {
+    const updated = updateSectionInTree(sections, sectionId, (sec) => ({
+      ...sec,
+      links: [],
+      updated_at: new Date().toISOString(),
+    }));
+    saveSections(updated);
+    setSectionMenu(null);
+  };
+
+  // ── Bulletproof Native DOM Parser for Nested Bookmarks ────────
 
   interface ParsedFolderNode {
     title: string;
@@ -225,69 +315,121 @@ export default function LinkVault({ isSidebarOpen, onOpenSidebar }: LinkVaultPro
     subfolders: ParsedFolderNode[];
   }
 
-  // Recursive parser for Netscape HTML bookmark files
-  const parseNetscapeHTMLTree = (htmlText: string): ParsedFolderNode[] => {
-    const rootNodes: ParsedFolderNode[] = [];
-    const stack: ParsedFolderNode[] = [];
-    let pendingFolderName: string | null = null;
+  const parseBookmarkDOMTree = (htmlText: string): ParsedFolderNode[] => {
+    const parser = new DOMParser();
+    const doc = parser.parseFromString(htmlText, 'text/html');
 
-    // Sequential regex matching H3 folders, DL opens, DL closes, and Anchor links
-    const tagRegex = /(<h3[^>]*>.*?<\/h3>|<dl[^>]*>|<\/dl>|<a\s+[^>]*>.*?<\/a>)/gi;
-    let match;
+    // Helper to crawl a DL element recursively
+    const crawlDL = (dlElement: Element): ParsedFolderNode[] => {
+      const result: ParsedFolderNode[] = [];
+      const children = Array.from(dlElement.children);
 
-    while ((match = tagRegex.exec(htmlText)) !== null) {
-      const tagContent = match[0];
+      let currentLinksBucket: { url: string; title: string }[] = [];
 
-      if (/<h3/i.test(tagContent)) {
-        const h3Inner = tagContent.match(/<h3[^>]*>(.*?)<\/h3>/i);
-        if (h3Inner) {
-          pendingFolderName = h3Inner[1].replace(/<[^>]*>/g, '').trim();
-        }
-      } else if (/<dl/i.test(tagContent)) {
-        const folderName = pendingFolderName || 'General Links';
-        pendingFolderName = null;
+      for (let i = 0; i < children.length; i++) {
+        const child = children[i];
 
-        const newNode: ParsedFolderNode = {
-          title: folderName,
-          links: [],
-          subfolders: [],
-        };
+        if (child.tagName === 'DT') {
+          const h3 = child.querySelector(':scope > h3') || child.querySelector('h3');
+          const a = child.querySelector(':scope > a') || child.querySelector('a');
+          const innerDL = child.querySelector(':scope > dl') || child.querySelector('dl') ||
+                          (child.nextElementSibling?.tagName === 'DL' ? child.nextElementSibling : null);
 
-        if (stack.length === 0) {
-          rootNodes.push(newNode);
-        } else {
-          stack[stack.length - 1].subfolders.push(newNode);
-        }
-        stack.push(newNode);
-      } else if (/<\/dl/i.test(tagContent)) {
-        stack.pop();
-      } else if (/<a/i.test(tagContent)) {
-        const hrefMatch = tagContent.match(/href="([^"]*)"/i) || tagContent.match(/href='([^']*)'/i);
-        const titleMatch = tagContent.match(/>(.*?)<\/a>/i);
-        const url = hrefMatch ? hrefMatch[1] : '';
-        const title = titleMatch ? titleMatch[1].replace(/<[^>]*>/g, '').trim() : '';
+          if (h3) {
+            const folderName = (h3.textContent || 'Folder').trim();
+            const subTree = innerDL ? crawlDL(innerDL) : [];
 
-        if (url && (url.startsWith('http://') || url.startsWith('https://'))) {
-          const linkObj = { url, title: title || url };
-          if (stack.length > 0) {
-            stack[stack.length - 1].links.push(linkObj);
-          } else {
-            // If link outside DL, attach to a root folder
-            let defaultRoot = rootNodes.find((r) => r.title === 'General Links');
-            if (!defaultRoot) {
-              defaultRoot = { title: 'General Links', links: [], subfolders: [] };
-              rootNodes.push(defaultRoot);
+            // Collect direct links inside innerDL (links not inside a sub-DT with H3)
+            const directFolderLinks: { url: string; title: string }[] = [];
+            if (innerDL) {
+              const subDTs = Array.from(innerDL.children).filter((el) => el.tagName === 'DT');
+              subDTs.forEach((subDT) => {
+                const subH3 = subDT.querySelector(':scope > h3') || subDT.querySelector('h3');
+                const subA = subDT.querySelector(':scope > a') || subDT.querySelector('a');
+                if (subA && !subH3) {
+                  const href = subA.getAttribute('href') || '';
+                  if (href.startsWith('http://') || href.startsWith('https://')) {
+                    directFolderLinks.push({ url: href, title: (subA.textContent || href).trim() });
+                  }
+                }
+              });
             }
-            defaultRoot.links.push(linkObj);
+
+            result.push({
+              title: folderName,
+              links: directFolderLinks,
+              subfolders: subTree,
+            });
+          } else if (a) {
+            const href = a.getAttribute('href') || '';
+            if (href.startsWith('http://') || href.startsWith('https://')) {
+              currentLinksBucket.push({ url: href, title: (a.textContent || href).trim() });
+            }
           }
+        } else if (child.tagName === 'A') {
+          const href = child.getAttribute('href') || '';
+          if (href.startsWith('http://') || href.startsWith('https://')) {
+            currentLinksBucket.push({ url: href, title: (child.textContent || href).trim() });
+          }
+        } else if (child.tagName === 'DL') {
+          const sub = crawlDL(child);
+          result.push(...sub);
         }
       }
+
+      if (currentLinksBucket.length > 0) {
+        result.unshift({
+          title: 'General Bookmarks',
+          links: currentLinksBucket,
+          subfolders: [],
+        });
+      }
+
+      return result;
+    };
+
+    const rootDL = doc.querySelector('dl');
+    if (!rootDL) {
+      const allAnchors = Array.from(doc.querySelectorAll('a'))
+        .map((a) => ({ url: a.getAttribute('href') || '', title: (a.textContent || a.getAttribute('href') || '').trim() }))
+        .filter((l) => l.url.startsWith('http://') || l.url.startsWith('https://'));
+
+      return [{ title: 'Imported Links', links: allAnchors, subfolders: [] }];
     }
 
-    return rootNodes;
+    const rawTree = crawlDL(rootDL);
+
+    // Unwrap generic top browser wrappers like "Bookmarks bar", "Bookmarks", "Bookmarks menu"
+    const unwrapGenericRoots = (nodes: ParsedFolderNode[]): ParsedFolderNode[] => {
+      const unwrapped: ParsedFolderNode[] = [];
+      nodes.forEach((node) => {
+        const lower = node.title.toLowerCase();
+        if (
+          lower === 'bookmarks bar' ||
+          lower === 'bookmarks menu' ||
+          lower === 'other bookmarks' ||
+          lower === 'synced bookmarks' ||
+          lower === 'mobile bookmarks' ||
+          lower === 'bookmarks'
+        ) {
+          if (node.subfolders.length > 0) {
+            if (node.links.length > 0) {
+              unwrapped.push({ title: 'General Bookmarks', links: node.links, subfolders: [] });
+            }
+            unwrapped.push(...node.subfolders);
+          } else {
+            unwrapped.push(node);
+          }
+        } else {
+          unwrapped.push(node);
+        }
+      });
+      return unwrapped;
+    };
+
+    return unwrapGenericRoots(rawTree);
   };
 
-  // Convert ParsedFolderNode tree into VaultSection tree
   const convertParsedTreeToVault = (
     nodes: ParsedFolderNode[],
     allNewLinks: { sectionId: string; linkId: string; url: string }[],
@@ -328,7 +470,6 @@ export default function LinkVault({ isSidebarOpen, onOpenSidebar }: LinkVaultPro
     });
   };
 
-  // Recursive parser for JSON bookmarks trees
   const parseJSONBookmarksTree = (
     data: any,
     allNewLinks: { sectionId: string; linkId: string; url: string }[],
@@ -431,14 +572,13 @@ export default function LinkVault({ isSidebarOpen, onOpenSidebar }: LinkVaultPro
       const allNewLinks: { sectionId: string; linkId: string; url: string }[] = [];
       let importedSections: VaultSection[] = [];
 
-      if (file.name.endsWith('.html') || file.name.endsWith('.htm') || text.includes('<!DOCTYPE NETSCAPE-Bookmark-file-1>')) {
-        const parsedTree = parseNetscapeHTMLTree(text);
+      if (file.name.endsWith('.html') || file.name.endsWith('.htm') || text.includes('<!DOCTYPE NETSCAPE-Bookmark-file-1>') || text.includes('<H3')) {
+        const parsedTree = parseBookmarkDOMTree(text);
         importedSections = convertParsedTreeToVault(parsedTree, allNewLinks);
       } else if (file.name.endsWith('.json') || text.trim().startsWith('{') || text.trim().startsWith('[')) {
         const jsonData = JSON.parse(text);
         importedSections = parseJSONBookmarksTree(jsonData, allNewLinks);
       } else {
-        // Fallback: newline separated URLs
         const urls = text
           .split('\n')
           .map((l) => l.trim())
@@ -531,28 +671,6 @@ export default function LinkVault({ isSidebarOpen, onOpenSidebar }: LinkVaultPro
     }
 
     setScrapingProgress(null);
-  };
-
-  // Deep update link in section or nested subsections
-  const updateLinkInTree = (
-    tree: VaultSection[],
-    linkId: string,
-    updater: (link: VaultLink) => VaultLink
-  ): VaultSection[] => {
-    return tree.map((sec) => ({
-      ...sec,
-      links: sec.links.map((l) => (l.id === linkId ? updater(l) : l)),
-      subsections: sec.subsections ? updateLinkInTree(sec.subsections, linkId, updater) : [],
-    }));
-  };
-
-  // Deep delete link in section or nested subsections
-  const deleteLinkInTree = (tree: VaultSection[], linkId: string): VaultSection[] => {
-    return tree.map((sec) => ({
-      ...sec,
-      links: sec.links.filter((l) => l.id !== linkId),
-      subsections: sec.subsections ? deleteLinkInTree(sec.subsections, linkId) : [],
-    }));
   };
 
   // ── Export Vault ──────────────────────────────────────────────
@@ -755,6 +873,11 @@ export default function LinkVault({ isSidebarOpen, onOpenSidebar }: LinkVaultPro
 
   const handleDeleteLink = (linkId: string) => {
     saveSections(deleteLinkInTree(sections, linkId));
+    setSelectedLinkIds((prev) => {
+      const next = new Set(prev);
+      next.delete(linkId);
+      return next;
+    });
   };
 
   const handleCopyLink = (linkId: string, url: string) => {
@@ -863,12 +986,14 @@ export default function LinkVault({ isSidebarOpen, onOpenSidebar }: LinkVaultPro
     const isTopLevel = depth === 0;
     const totalCount = countTotalSectionLinks(section);
     const hasSubsections = section.subsections && section.subsections.length > 0;
+    const allSecLinkIds = getAllSectionLinkIds(section);
+    const areAllSelected = allSecLinkIds.length > 0 && allSecLinkIds.every((id) => selectedLinkIds.has(id));
 
     return (
       <div
         key={section.id}
         className={`bg-white border rounded-lg shadow-xs overflow-hidden transition-all ${
-          isTopLevel ? 'border-neutral-200 mb-3' : 'border-neutral-200/80 my-2 ml-3 sm:ml-4 border-l-2'
+          isTopLevel ? 'border-neutral-200 mb-3' : 'border-neutral-200/80 my-2 ml-3 sm:ml-5 border-l-2'
         }`}
         style={!isTopLevel ? { borderLeftColor: 'var(--accent-color, #ff6600)' } : undefined}
       >
@@ -929,7 +1054,7 @@ export default function LinkVault({ isSidebarOpen, onOpenSidebar }: LinkVaultPro
             </button>
             {sectionMenu === section.id && (
               <div
-                className="absolute right-0 top-7 z-30 w-40 bg-white border border-neutral-200 rounded-md shadow-xl py-1 text-xs font-semibold animate-fade-in"
+                className="absolute right-0 top-7 z-30 w-44 bg-white border border-neutral-200 rounded-md shadow-xl py-1 text-xs font-semibold animate-fade-in"
                 onClick={(e) => e.stopPropagation()}
               >
                 <button
@@ -942,6 +1067,16 @@ export default function LinkVault({ isSidebarOpen, onOpenSidebar }: LinkVaultPro
                   className="w-full px-3 py-1.5 hover:bg-neutral-50 flex items-center gap-2 text-left cursor-pointer text-neutral-700"
                 >
                   <FolderPlus className="w-3 h-3 text-neutral-400" /> Add Subfolder
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    toggleSelectSectionLinks(section);
+                    setSectionMenu(null);
+                  }}
+                  className="w-full px-3 py-1.5 hover:bg-neutral-50 flex items-center gap-2 text-left cursor-pointer text-neutral-700"
+                >
+                  <CheckSquare className="w-3 h-3 text-neutral-400" /> {areAllSelected ? 'Deselect Links' : 'Select All Links'}
                 </button>
                 <button
                   type="button"
@@ -964,6 +1099,15 @@ export default function LinkVault({ isSidebarOpen, onOpenSidebar }: LinkVaultPro
                 >
                   <ClipboardPaste className="w-3 h-3 text-neutral-400" /> Bulk Paste Links
                 </button>
+                {section.links.length > 0 && (
+                  <button
+                    type="button"
+                    onClick={() => handleDeleteAllSectionLinks(section.id)}
+                    className="w-full px-3 py-1.5 hover:bg-red-50 flex items-center gap-2 text-left text-red-600 cursor-pointer"
+                  >
+                    <Trash2 className="w-3 h-3 text-red-500" /> Clear All Links
+                  </button>
+                )}
                 <button
                   type="button"
                   onClick={() => {
@@ -1025,7 +1169,7 @@ export default function LinkVault({ isSidebarOpen, onOpenSidebar }: LinkVaultPro
 
             {/* Nested Subsections / Subfolders */}
             {hasSubsections && (
-              <div className="p-2 bg-neutral-50/30">
+              <div className="p-1.5 sm:p-2 bg-neutral-50/30">
                 {section.subsections!.map((sub) => renderSectionCard(sub, depth + 1))}
               </div>
             )}
@@ -1033,12 +1177,28 @@ export default function LinkVault({ isSidebarOpen, onOpenSidebar }: LinkVaultPro
             {/* Direct Links in This Section/Folder */}
             {section.links.map((link) => {
               const isScrapingThis = scrapingLinkIds.has(link.id);
+              const isSelected = selectedLinkIds.has(link.id);
 
               return (
                 <div
                   key={link.id}
-                  className="flex items-start gap-2.5 px-3 py-2 hover:bg-neutral-50/80 group transition-all"
+                  className={`flex items-start gap-2.5 px-3 py-2 transition-all ${
+                    isSelected ? 'bg-indigo-50/60' : 'hover:bg-neutral-50/80'
+                  } group`}
                 >
+                  {/* Selection Checkbox */}
+                  <button
+                    type="button"
+                    onClick={(e) => toggleSelectLink(link.id, e)}
+                    className="mt-0.5 text-neutral-400 hover:text-indigo-600 cursor-pointer shrink-0"
+                  >
+                    {isSelected ? (
+                      <CheckSquare className="w-3.5 h-3.5 text-indigo-600" />
+                    ) : (
+                      <Square className="w-3.5 h-3.5 text-neutral-300 opacity-60 group-hover:opacity-100" />
+                    )}
+                  </button>
+
                   {/* Favicon */}
                   <div className="mt-0.5 shrink-0">
                     {link.favicon_url ? (
@@ -1311,7 +1471,7 @@ export default function LinkVault({ isSidebarOpen, onOpenSidebar }: LinkVaultPro
               setIsImportModalOpen(true);
             }}
             className="px-2.5 py-1.5 bg-neutral-100 hover:bg-neutral-200 text-neutral-700 rounded-lg font-bold text-xs flex items-center gap-1.5 cursor-pointer transition-all shadow-2xs shrink-0"
-            title="Import browser bookmark files (.html or .json) and organize into Vault sections"
+            title="Import browser bookmark files (.html or .json) and organize into nested Vault sections"
           >
             <Upload className="w-3.5 h-3.5 text-neutral-500" />
             <span className="hidden sm:inline">Import Bookmarks</span>
@@ -1343,7 +1503,7 @@ export default function LinkVault({ isSidebarOpen, onOpenSidebar }: LinkVaultPro
       </div>
 
       {/* ── Scrollable Sections Container ── */}
-      <div className="flex-1 p-4 sm:p-6 overflow-y-auto bg-neutral-50/50">
+      <div className="flex-1 p-4 sm:p-6 overflow-y-auto bg-neutral-50/50 pb-20">
 
         {/* New Top-Level Section Form */}
         {isCreatingSection && (
@@ -1404,7 +1564,7 @@ export default function LinkVault({ isSidebarOpen, onOpenSidebar }: LinkVaultPro
               <p className="text-xs text-neutral-400 max-w-sm leading-relaxed mb-4">
                 {searchQuery
                   ? 'Try a different search term.'
-                  : 'Import your browser bookmarks file (with subfolders) or create custom sections to organize links separately from your main dashboard.'}
+                  : 'Import your browser bookmarks file (with nested subfolders) or create custom sections to organize links separately from your main dashboard.'}
               </p>
               {!searchQuery && (
                 <div className="flex items-center justify-center gap-2">
@@ -1457,6 +1617,31 @@ export default function LinkVault({ isSidebarOpen, onOpenSidebar }: LinkVaultPro
           })}
         </div>
       </div>
+
+      {/* ── Floating Bulk Action Bar ── */}
+      {selectedLinkIds.size > 0 && (
+        <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-40 bg-neutral-900 text-white px-4 py-2.5 rounded-lg shadow-2xl flex items-center gap-3 border border-neutral-700 animate-fade-in text-xs font-bold pointer-events-auto">
+          <span className="flex items-center gap-1.5 text-amber-400">
+            <CheckSquare className="w-4 h-4" />
+            {selectedLinkIds.size} link{selectedLinkIds.size > 1 ? 's' : ''} selected
+          </span>
+          <button
+            type="button"
+            onClick={() => setSelectedLinkIds(new Set())}
+            className="px-2.5 py-1 bg-neutral-800 hover:bg-neutral-700 rounded text-neutral-300 hover:text-white cursor-pointer transition-all"
+          >
+            Deselect All
+          </button>
+          <button
+            type="button"
+            onClick={handleBulkDeleteSelected}
+            className="px-3 py-1 bg-red-600 hover:bg-red-700 text-white rounded cursor-pointer flex items-center gap-1.5 shadow-xs transition-all"
+          >
+            <Trash2 className="w-3.5 h-3.5" />
+            <span>Delete Selected ({selectedLinkIds.size})</span>
+          </button>
+        </div>
+      )}
 
       {/* ── Import Bookmarks Modal ── */}
       {isImportModalOpen && (
