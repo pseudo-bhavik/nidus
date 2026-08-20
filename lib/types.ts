@@ -14,7 +14,7 @@ export interface Bookmark {
   read_time_minutes: number;
 }
 
-export type ViewType = 'all' | 'unsorted' | 'trash' | 'sticky-notes' | 'canvas' | string; // string represents specific category names
+export type ViewType = 'all' | 'unsorted' | 'trash' | 'sticky-notes' | 'canvas' | 'vault' | string; // string represents specific category names
 
 export interface StickyNote {
   id: string;
@@ -33,6 +33,26 @@ export interface WhiteboardCanvasDoc {
   elementsData: any[];
   appStateData?: any;
   position?: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface VaultLink {
+  id: string;
+  url: string;
+  title: string;
+  description?: string;
+  favicon_url?: string;
+  created_at: string;
+}
+
+export interface VaultSection {
+  id: string;
+  title: string;
+  color: string;
+  links: VaultLink[];
+  is_collapsed: boolean;
+  position: number;
   created_at: string;
   updated_at: string;
 }
