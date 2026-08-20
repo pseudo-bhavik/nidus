@@ -5,7 +5,7 @@ import {
   Archive, Plus, Search, X, ChevronDown, ChevronRight,
   ExternalLink, Copy, Check, Trash2, Edit2, GripVertical,
   Link as LinkIcon, ClipboardPaste, MoreHorizontal, RefreshCw, Clock, Globe,
-  Upload, Download, FileText, CheckCircle, AlertTriangle
+  Upload, Download, FileText, CheckCircle, AlertTriangle, Folder, FolderOpen, FolderPlus
 } from 'lucide-react';
 import { VaultSection, VaultLink } from '../lib/types';
 
@@ -46,6 +46,17 @@ function getDomain(url: string): string {
   }
 }
 
+// Count all links in a section including all recursive subsections
+function countTotalSectionLinks(section: VaultSection): number {
+  let count = section.links.length;
+  if (section.subsections && section.subsections.length > 0) {
+    section.subsections.forEach((sub) => {
+      count += countTotalSectionLinks(sub);
+    });
+  }
+  return count;
+}
+
 interface ScrapedMetadata {
   title: string;
   description: string | null;
@@ -68,11 +79,16 @@ export default function LinkVault({ isSidebarOpen, onOpenSidebar }: LinkVaultPro
   const [scrapingLinkIds, setScrapingLinkIds] = useState<Set<string>>(new Set());
   const [scrapingProgress, setScrapingProgress] = useState<{ current: number; total: number } | null>(null);
 
-  // Section creation
+  // Top Section creation
   const [isCreatingSection, setIsCreatingSection] = useState(false);
   const [newSectionTitle, setNewSectionTitle] = useState('');
   const [newSectionColor, setNewSectionColor] = useState('emerald');
   const newSectionInputRef = useRef<HTMLInputElement>(null);
+
+  // Subfolder creation inside an existing section/subfolder
+  const [creatingSubfolderTargetId, setCreatingSubfolderTargetId] = useState<string | null>(null);
+  const [newSubfolderTitle, setNewSubfolderTitle] = useState('');
+  const subfolderInputRef = useRef<HTMLInputElement>(null);
 
   // Link adding
   const [addingLinkToSection, setAddingLinkToSection] = useState<string | null>(null);
@@ -103,7 +119,7 @@ export default function LinkVault({ isSidebarOpen, onOpenSidebar }: LinkVaultPro
   // Section delete confirmation
   const [sectionToDelete, setSectionToDelete] = useState<VaultSection | null>(null);
 
-  // Drag state for sections
+  // Drag state for top-level sections
   const [draggedSectionIdx, setDraggedSectionIdx] = useState<number | null>(null);
   const [dragOverSectionIdx, setDragOverSectionIdx] = useState<number | null>(null);
 
@@ -150,7 +166,7 @@ export default function LinkVault({ isSidebarOpen, onOpenSidebar }: LinkVaultPro
           title: data.title || getDomain(url),
           description: data.description || null,
           domain: data.domain || getDomain(url),
-          thumbnail_url: data.thumbnailUrl || null,
+          thumbnail_url: null,
           favicon_url: data.faviconUrl || getFaviconUrl(url),
           read_time_minutes: data.readTimeMinutes || 1,
         };
@@ -169,31 +185,82 @@ export default function LinkVault({ isSidebarOpen, onOpenSidebar }: LinkVaultPro
     };
   };
 
-  // ── Import Bookmarks into Vault Sections ──────────────────────
+  // ── Recursive Section Helpers ─────────────────────────────────
 
-  const parseNetscapeHTML = (htmlText: string): { url: string; title: string; category?: string }[] => {
-    const links: { url: string; title: string; category?: string }[] = [];
-    const tagRegex = /(<h3[^>]*>.*?<\/h3>|<dl[^>]*>|<\/dl>|<a\s+[^>]*>.*?<\/a>)/gi;
-    const folderStack: string[] = [];
+  // Deep update a section or subsection anywhere in the tree
+  const updateSectionInTree = (
+    tree: VaultSection[],
+    targetId: string,
+    updater: (sec: VaultSection) => VaultSection
+  ): VaultSection[] => {
+    return tree.map((sec) => {
+      if (sec.id === targetId) {
+        return updater(sec);
+      }
+      if (sec.subsections && sec.subsections.length > 0) {
+        return {
+          ...sec,
+          subsections: updateSectionInTree(sec.subsections, targetId, updater),
+        };
+      }
+      return sec;
+    });
+  };
+
+  // Deep remove a section or subsection anywhere in the tree
+  const deleteSectionFromTree = (tree: VaultSection[], targetId: string): VaultSection[] => {
+    return tree
+      .filter((sec) => sec.id !== targetId)
+      .map((sec) => ({
+        ...sec,
+        subsections: sec.subsections ? deleteSectionFromTree(sec.subsections, targetId) : [],
+      }));
+  };
+
+  // ── Import Bookmarks into Vault with Nested Subfolder Hierarchy ──
+
+  interface ParsedFolderNode {
+    title: string;
+    links: { url: string; title: string }[];
+    subfolders: ParsedFolderNode[];
+  }
+
+  // Recursive parser for Netscape HTML bookmark files
+  const parseNetscapeHTMLTree = (htmlText: string): ParsedFolderNode[] => {
+    const rootNodes: ParsedFolderNode[] = [];
+    const stack: ParsedFolderNode[] = [];
     let pendingFolderName: string | null = null;
+
+    // Sequential regex matching H3 folders, DL opens, DL closes, and Anchor links
+    const tagRegex = /(<h3[^>]*>.*?<\/h3>|<dl[^>]*>|<\/dl>|<a\s+[^>]*>.*?<\/a>)/gi;
     let match;
 
     while ((match = tagRegex.exec(htmlText)) !== null) {
       const tagContent = match[0];
+
       if (/<h3/i.test(tagContent)) {
         const h3Inner = tagContent.match(/<h3[^>]*>(.*?)<\/h3>/i);
         if (h3Inner) {
           pendingFolderName = h3Inner[1].replace(/<[^>]*>/g, '').trim();
         }
       } else if (/<dl/i.test(tagContent)) {
-        if (pendingFolderName) {
-          folderStack.push(pendingFolderName);
-          pendingFolderName = null;
+        const folderName = pendingFolderName || 'General Links';
+        pendingFolderName = null;
+
+        const newNode: ParsedFolderNode = {
+          title: folderName,
+          links: [],
+          subfolders: [],
+        };
+
+        if (stack.length === 0) {
+          rootNodes.push(newNode);
         } else {
-          folderStack.push(folderStack.length === 0 ? 'General Links' : folderStack[folderStack.length - 1]);
+          stack[stack.length - 1].subfolders.push(newNode);
         }
+        stack.push(newNode);
       } else if (/<\/dl/i.test(tagContent)) {
-        folderStack.pop();
+        stack.pop();
       } else if (/<a/i.test(tagContent)) {
         const hrefMatch = tagContent.match(/href="([^"]*)"/i) || tagContent.match(/href='([^']*)'/i);
         const titleMatch = tagContent.match(/>(.*?)<\/a>/i);
@@ -201,72 +268,155 @@ export default function LinkVault({ isSidebarOpen, onOpenSidebar }: LinkVaultPro
         const title = titleMatch ? titleMatch[1].replace(/<[^>]*>/g, '').trim() : '';
 
         if (url && (url.startsWith('http://') || url.startsWith('https://'))) {
-          let category = folderStack[folderStack.length - 1] || 'General Links';
-          if (
-            category === 'Bookmarks Bar' ||
-            category === 'Bookmarks' ||
-            category === 'Other Bookmarks' ||
-            category === 'Mobile Bookmarks' ||
-            category === 'Bookmarks menu' ||
-            category === 'BookmarksMenu'
-          ) {
-            category = 'General Links';
+          const linkObj = { url, title: title || url };
+          if (stack.length > 0) {
+            stack[stack.length - 1].links.push(linkObj);
+          } else {
+            // If link outside DL, attach to a root folder
+            let defaultRoot = rootNodes.find((r) => r.title === 'General Links');
+            if (!defaultRoot) {
+              defaultRoot = { title: 'General Links', links: [], subfolders: [] };
+              rootNodes.push(defaultRoot);
+            }
+            defaultRoot.links.push(linkObj);
           }
-          links.push({ url, title: title || url, category });
         }
       }
     }
-    return links;
+
+    return rootNodes;
   };
 
-  const parseJSONBookmarks = (jsonText: string): { url: string; title: string; category?: string }[] => {
-    const data = JSON.parse(jsonText);
-    const links: { url: string; title: string; category?: string }[] = [];
+  // Convert ParsedFolderNode tree into VaultSection tree
+  const convertParsedTreeToVault = (
+    nodes: ParsedFolderNode[],
+    allNewLinks: { sectionId: string; linkId: string; url: string }[],
+    depth = 0
+  ): VaultSection[] => {
+    return nodes.map((node, idx) => {
+      const sectionId = generateId('vsec');
+      const color = SECTION_COLORS[(depth + idx) % SECTION_COLORS.length].id;
 
-    const traverse = (node: any, currentFolder: string) => {
-      if (!node) return;
-      if (node.type === 'folder' || node.children) {
-        const folderName = node.name || node.title || currentFolder;
-        const cleanFolder = (
-          folderName === 'Bookmarks bar' ||
-          folderName === 'Other bookmarks' ||
-          folderName === 'Synced bookmarks' ||
-          folderName === 'Bookmarks'
-        ) ? 'General Links' : folderName;
+      const links: VaultLink[] = node.links.map((l) => {
+        const linkId = generateId('vlink');
+        allNewLinks.push({ sectionId, linkId, url: l.url });
+        return {
+          id: linkId,
+          url: l.url,
+          title: l.title || getDomain(l.url),
+          description: null,
+          domain: getDomain(l.url),
+          favicon_url: getFaviconUrl(l.url),
+          read_time_minutes: 1,
+          created_at: new Date().toISOString(),
+        };
+      });
 
-        if (Array.isArray(node.children)) {
-          node.children.forEach((child: any) => traverse(child, cleanFolder));
+      const subsections = convertParsedTreeToVault(node.subfolders, allNewLinks, depth + 1);
+
+      return {
+        id: sectionId,
+        title: node.title,
+        color,
+        links,
+        subsections,
+        is_collapsed: false,
+        position: idx,
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      };
+    });
+  };
+
+  // Recursive parser for JSON bookmarks trees
+  const parseJSONBookmarksTree = (
+    data: any,
+    allNewLinks: { sectionId: string; linkId: string; url: string }[],
+    depth = 0
+  ): VaultSection[] => {
+    const sectionsResult: VaultSection[] = [];
+
+    const processFolder = (name: string, children: any[]): VaultSection => {
+      const sectionId = generateId('vsec');
+      const color = SECTION_COLORS[(depth + sectionsResult.length) % SECTION_COLORS.length].id;
+      const links: VaultLink[] = [];
+      const subSections: VaultSection[] = [];
+
+      children.forEach((child) => {
+        if (child.url) {
+          const linkId = generateId('vlink');
+          allNewLinks.push({ sectionId, linkId, url: child.url });
+          links.push({
+            id: linkId,
+            url: child.url,
+            title: child.name || child.title || getDomain(child.url),
+            description: null,
+            domain: getDomain(child.url),
+            favicon_url: getFaviconUrl(child.url),
+            read_time_minutes: 1,
+            created_at: new Date().toISOString(),
+          });
+        } else if (child.children || child.type === 'folder') {
+          const sub = processFolder(child.name || child.title || 'Subfolder', child.children || []);
+          subSections.push(sub);
         }
-      } else if (node.url) {
-        links.push({
-          url: node.url,
-          title: node.name || node.title || node.url,
-          category: currentFolder || 'General Links',
-        });
-      }
+      });
+
+      return {
+        id: sectionId,
+        title: name,
+        color,
+        links,
+        subsections: subSections,
+        is_collapsed: false,
+        position: sectionsResult.length,
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      };
     };
 
     if (Array.isArray(data)) {
       data.forEach((item) => {
-        if (item.url) {
-          links.push({
-            url: item.url,
-            title: item.title || item.name || item.url,
-            category: item.category || item.folder || 'General Links',
+        if (item.children) {
+          sectionsResult.push(processFolder(item.name || item.title || 'Bookmarks', item.children));
+        } else if (item.url) {
+          const linkId = generateId('vlink');
+          const secId = generateId('vsec');
+          allNewLinks.push({ sectionId: secId, linkId, url: item.url });
+          sectionsResult.push({
+            id: secId,
+            title: item.category || 'Imported Links',
+            color: SECTION_COLORS[0].id,
+            links: [{
+              id: linkId,
+              url: item.url,
+              title: item.title || item.name || getDomain(item.url),
+              description: null,
+              domain: getDomain(item.url),
+              favicon_url: getFaviconUrl(item.url),
+              read_time_minutes: 1,
+              created_at: new Date().toISOString(),
+            }],
+            subsections: [],
+            is_collapsed: false,
+            position: sectionsResult.length,
+            created_at: new Date().toISOString(),
+            updated_at: new Date().toISOString(),
           });
-        } else if (item.children) {
-          traverse(item, 'General Links');
         }
       });
     } else if (data.roots) {
       Object.keys(data.roots).forEach((key) => {
-        traverse(data.roots[key], key);
+        const root = data.roots[key];
+        if (root && root.children) {
+          sectionsResult.push(processFolder(root.name || key, root.children));
+        }
       });
     } else if (data.children) {
-      traverse(data, 'General Links');
+      sectionsResult.push(processFolder(data.name || 'Bookmarks', data.children));
     }
 
-    return links;
+    return sectionsResult;
   };
 
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -278,96 +428,68 @@ export default function LinkVault({ isSidebarOpen, onOpenSidebar }: LinkVaultPro
 
     try {
       const text = await file.text();
-      let parsedLinks: { url: string; title: string; category?: string }[] = [];
+      const allNewLinks: { sectionId: string; linkId: string; url: string }[] = [];
+      let importedSections: VaultSection[] = [];
 
       if (file.name.endsWith('.html') || file.name.endsWith('.htm') || text.includes('<!DOCTYPE NETSCAPE-Bookmark-file-1>')) {
-        parsedLinks = parseNetscapeHTML(text);
+        const parsedTree = parseNetscapeHTMLTree(text);
+        importedSections = convertParsedTreeToVault(parsedTree, allNewLinks);
       } else if (file.name.endsWith('.json') || text.trim().startsWith('{') || text.trim().startsWith('[')) {
-        parsedLinks = parseJSONBookmarks(text);
+        const jsonData = JSON.parse(text);
+        importedSections = parseJSONBookmarksTree(jsonData, allNewLinks);
       } else {
-        parsedLinks = text
+        // Fallback: newline separated URLs
+        const urls = text
           .split('\n')
           .map((l) => l.trim())
-          .filter((l) => l.startsWith('http://') || l.startsWith('https://'))
-          .map((url) => ({ url, title: getDomain(url), category: 'Imported Links' }));
+          .filter((l) => l.startsWith('http://') || l.startsWith('https://'));
+
+        const secId = generateId('vsec');
+        const links: VaultLink[] = urls.map((url) => {
+          const linkId = generateId('vlink');
+          allNewLinks.push({ sectionId: secId, linkId, url });
+          return {
+            id: linkId,
+            url,
+            title: getDomain(url),
+            description: null,
+            domain: getDomain(url),
+            favicon_url: getFaviconUrl(url),
+            read_time_minutes: 1,
+            created_at: new Date().toISOString(),
+          };
+        });
+
+        importedSections = [{
+          id: secId,
+          title: 'Imported Links',
+          color: 'emerald',
+          links,
+          subsections: [],
+          is_collapsed: false,
+          position: 0,
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+        }];
       }
 
-      if (parsedLinks.length === 0) {
-        throw new Error('No valid bookmark links found in the uploaded file.');
+      if (importedSections.length === 0) {
+        throw new Error('No valid bookmarks or folders found in the uploaded file.');
       }
 
       setImportStatus('saving');
 
-      // Group parsed links by category/folder
-      const grouped: Record<string, VaultLink[]> = {};
-      const allNewLinkItems: { sectionId: string; linkId: string; url: string }[] = [];
-
-      parsedLinks.forEach((item) => {
-        const catName = (item.category || 'General Links').trim();
-        if (!grouped[catName]) {
-          grouped[catName] = [];
-        }
-        const linkId = generateId('vlink');
-        const vLink: VaultLink = {
-          id: linkId,
-          url: item.url,
-          title: item.title || getDomain(item.url),
-          description: null,
-          domain: getDomain(item.url),
-          thumbnail_url: null,
-          favicon_url: getFaviconUrl(item.url),
-          read_time_minutes: 1,
-          created_at: new Date().toISOString(),
-        };
-        grouped[catName].push(vLink);
-      });
-
-      let updatedSections = [...sections];
-
-      Object.entries(grouped).forEach(([catName, links]) => {
-        const existingSectionIdx = updatedSections.findIndex((s) => s.title.toLowerCase() === catName.toLowerCase());
-        if (existingSectionIdx >= 0) {
-          const targetSection = updatedSections[existingSectionIdx];
-          const existingUrls = new Set(targetSection.links.map((l) => l.url));
-          const uniqueLinksToAdd = links.filter((l) => !existingUrls.has(l.url));
-          
-          uniqueLinksToAdd.forEach((l) => {
-            allNewLinkItems.push({ sectionId: targetSection.id, linkId: l.id, url: l.url });
-          });
-
-          updatedSections[existingSectionIdx] = {
-            ...targetSection,
-            links: [...targetSection.links, ...uniqueLinksToAdd],
-            updated_at: new Date().toISOString(),
-          };
-        } else {
-          const newSectionId = generateId('vsec');
-          const color = SECTION_COLORS[(updatedSections.length) % SECTION_COLORS.length].id;
-          
-          links.forEach((l) => {
-            allNewLinkItems.push({ sectionId: newSectionId, linkId: l.id, url: l.url });
-          });
-
-          updatedSections.push({
-            id: newSectionId,
-            title: catName,
-            color,
-            links,
-            is_collapsed: false,
-            position: updatedSections.length,
-            created_at: new Date().toISOString(),
-            updated_at: new Date().toISOString(),
-          });
-        }
-      });
-
+      // Merge new sections with existing sections
+      const updatedSections = [...sections, ...importedSections].map((s, idx) => ({ ...s, position: idx }));
       saveSections(updatedSections);
-      setImportStats({ sectionsCount: Object.keys(grouped).length, linksCount: parsedLinks.length });
+
+      const totalLinksImported = allNewLinks.length;
+      setImportStats({ sectionsCount: importedSections.length, linksCount: totalLinksImported });
       setImportStatus('success');
 
-      // Trigger background scraper for all imported links
-      if (allNewLinkItems.length > 0) {
-        runBackgroundScraper(allNewLinkItems, updatedSections);
+      // Trigger background metadata scraper
+      if (allNewLinks.length > 0) {
+        runBackgroundScraper(allNewLinks, updatedSections);
       }
     } catch (err: any) {
       setImportStatus('error');
@@ -375,7 +497,7 @@ export default function LinkVault({ isSidebarOpen, onOpenSidebar }: LinkVaultPro
     }
   };
 
-  // Background Scraper Queue for imported/bulk links
+  // Background Scraper Queue for all imported/bulk links
   const runBackgroundScraper = async (
     items: { sectionId: string; linkId: string; url: string }[],
     initialSections: VaultSection[]
@@ -390,26 +512,14 @@ export default function LinkVault({ isSidebarOpen, onOpenSidebar }: LinkVaultPro
 
       try {
         const meta = await fetchLinkMetadata(item.url);
-        currentSections = currentSections.map((s) =>
-          s.id === item.sectionId
-            ? {
-                ...s,
-                links: s.links.map((l) =>
-                  l.id === item.linkId
-                    ? {
-                        ...l,
-                        title: meta.title || l.title,
-                        description: meta.description || l.description,
-                        domain: meta.domain || l.domain,
-                        thumbnail_url: meta.thumbnail_url || l.thumbnail_url,
-                        favicon_url: meta.favicon_url || l.favicon_url,
-                        read_time_minutes: meta.read_time_minutes || l.read_time_minutes,
-                      }
-                    : l
-                ),
-              }
-            : s
-        );
+        currentSections = updateLinkInTree(currentSections, item.linkId, (l) => ({
+          ...l,
+          title: meta.title || l.title,
+          description: meta.description || l.description,
+          domain: meta.domain || l.domain,
+          favicon_url: meta.favicon_url || l.favicon_url,
+          read_time_minutes: meta.read_time_minutes || l.read_time_minutes,
+        }));
         saveSections(currentSections);
       } catch (err) {}
 
@@ -421,6 +531,28 @@ export default function LinkVault({ isSidebarOpen, onOpenSidebar }: LinkVaultPro
     }
 
     setScrapingProgress(null);
+  };
+
+  // Deep update link in section or nested subsections
+  const updateLinkInTree = (
+    tree: VaultSection[],
+    linkId: string,
+    updater: (link: VaultLink) => VaultLink
+  ): VaultSection[] => {
+    return tree.map((sec) => ({
+      ...sec,
+      links: sec.links.map((l) => (l.id === linkId ? updater(l) : l)),
+      subsections: sec.subsections ? updateLinkInTree(sec.subsections, linkId, updater) : [],
+    }));
+  };
+
+  // Deep delete link in section or nested subsections
+  const deleteLinkInTree = (tree: VaultSection[], linkId: string): VaultSection[] => {
+    return tree.map((sec) => ({
+      ...sec,
+      links: sec.links.filter((l) => l.id !== linkId),
+      subsections: sec.subsections ? deleteLinkInTree(sec.subsections, linkId) : [],
+    }));
   };
 
   // ── Export Vault ──────────────────────────────────────────────
@@ -435,15 +567,16 @@ export default function LinkVault({ isSidebarOpen, onOpenSidebar }: LinkVaultPro
     downloadAnchor.remove();
   };
 
-  // ── Section CRUD ──────────────────────────────────────────────
+  // ── Section & Subfolder CRUD ──────────────────────────────────
 
-  const handleCreateSection = () => {
+  const handleCreateTopSection = () => {
     if (!newSectionTitle.trim()) return;
     const newSection: VaultSection = {
       id: generateId('vsec'),
       title: newSectionTitle.trim(),
       color: newSectionColor,
       links: [],
+      subsections: [],
       is_collapsed: false,
       position: sections.length,
       created_at: new Date().toISOString(),
@@ -455,18 +588,46 @@ export default function LinkVault({ isSidebarOpen, onOpenSidebar }: LinkVaultPro
     setIsCreatingSection(false);
   };
 
+  const handleCreateSubfolder = (parentSectionId: string) => {
+    if (!newSubfolderTitle.trim()) return;
+    const newSubfolder: VaultSection = {
+      id: generateId('vsec'),
+      title: newSubfolderTitle.trim(),
+      color: 'neutral',
+      links: [],
+      subsections: [],
+      is_collapsed: false,
+      position: 0,
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    };
+
+    const updated = updateSectionInTree(sections, parentSectionId, (sec) => ({
+      ...sec,
+      subsections: [...(sec.subsections || []), newSubfolder],
+      is_collapsed: false,
+      updated_at: new Date().toISOString(),
+    }));
+
+    saveSections(updated);
+    setNewSubfolderTitle('');
+    setCreatingSubfolderTargetId(null);
+  };
+
   const handleDeleteSection = () => {
     if (!sectionToDelete) return;
-    saveSections(sections.filter((s) => s.id !== sectionToDelete.id));
+    saveSections(deleteSectionFromTree(sections, sectionToDelete.id));
     setSectionToDelete(null);
   };
 
   const handleRenameSection = (id: string) => {
     if (!renameValue.trim()) return;
     saveSections(
-      sections.map((s) =>
-        s.id === id ? { ...s, title: renameValue.trim(), updated_at: new Date().toISOString() } : s
-      )
+      updateSectionInTree(sections, id, (sec) => ({
+        ...sec,
+        title: renameValue.trim(),
+        updated_at: new Date().toISOString(),
+      }))
     );
     setRenamingSectionId(null);
     setRenameValue('');
@@ -474,13 +635,14 @@ export default function LinkVault({ isSidebarOpen, onOpenSidebar }: LinkVaultPro
 
   const handleToggleCollapse = (id: string) => {
     saveSections(
-      sections.map((s) =>
-        s.id === id ? { ...s, is_collapsed: !s.is_collapsed } : s
-      )
+      updateSectionInTree(sections, id, (sec) => ({
+        ...sec,
+        is_collapsed: !sec.is_collapsed,
+      }))
     );
   };
 
-  // ── Single Link Add ───────────────────────────────────────────
+  // ── Link CRUD ─────────────────────────────────────────────────
 
   const handleAddLink = async (sectionId: string) => {
     const rawUrl = newLinkUrl.trim();
@@ -500,24 +662,21 @@ export default function LinkVault({ isSidebarOpen, onOpenSidebar }: LinkVaultPro
       title: metadata.title,
       description: metadata.description,
       domain: metadata.domain,
-      thumbnail_url: metadata.thumbnail_url,
       favicon_url: metadata.favicon_url,
       read_time_minutes: metadata.read_time_minutes,
       created_at: new Date().toISOString(),
     };
 
     saveSections(
-      sections.map((s) =>
-        s.id === sectionId
-          ? { ...s, links: [...s.links, newLink], updated_at: new Date().toISOString() }
-          : s
-      )
+      updateSectionInTree(sections, sectionId, (sec) => ({
+        ...sec,
+        links: [...sec.links, newLink],
+        updated_at: new Date().toISOString(),
+      }))
     );
     setNewLinkUrl('');
     setIsFetchingTitle(false);
   };
-
-  // ── Bulk Paste ────────────────────────────────────────────────
 
   const handleBulkPaste = async (sectionId: string) => {
     const lines = bulkPasteText
@@ -550,7 +709,6 @@ export default function LinkVault({ isSidebarOpen, onOpenSidebar }: LinkVaultPro
         title: getDomain(url),
         description: desc || null,
         domain: getDomain(url),
-        thumbnail_url: null,
         favicon_url: getFaviconUrl(url),
         read_time_minutes: 1,
         created_at: new Date().toISOString(),
@@ -558,11 +716,12 @@ export default function LinkVault({ isSidebarOpen, onOpenSidebar }: LinkVaultPro
       rawUrlMap.push({ sectionId, linkId, url });
     }
 
-    const updatedWithInitial = sections.map((s) =>
-      s.id === sectionId
-        ? { ...s, links: [...s.links, ...initialLinks], updated_at: new Date().toISOString() }
-        : s
-    );
+    const updatedWithInitial = updateSectionInTree(sections, sectionId, (sec) => ({
+      ...sec,
+      links: [...sec.links, ...initialLinks],
+      updated_at: new Date().toISOString(),
+    }));
+
     saveSections(updatedWithInitial);
     setBulkPasteText('');
     setBulkPasteSection(null);
@@ -572,32 +731,19 @@ export default function LinkVault({ isSidebarOpen, onOpenSidebar }: LinkVaultPro
     runBackgroundScraper(rawUrlMap, updatedWithInitial);
   };
 
-  const handleRescrapeLink = async (sectionId: string, linkId: string, url: string) => {
+  const handleRescrapeLink = async (linkId: string, url: string) => {
     setScrapingLinkIds((prev) => new Set(prev).add(linkId));
     try {
       const meta = await fetchLinkMetadata(url);
       saveSections(
-        sections.map((s) =>
-          s.id === sectionId
-            ? {
-                ...s,
-                links: s.links.map((l) =>
-                  l.id === linkId
-                    ? {
-                        ...l,
-                        title: meta.title,
-                        description: meta.description,
-                        domain: meta.domain,
-                        thumbnail_url: meta.thumbnail_url,
-                        favicon_url: meta.favicon_url,
-                        read_time_minutes: meta.read_time_minutes,
-                      }
-                    : l
-                ),
-                updated_at: new Date().toISOString(),
-              }
-            : s
-        )
+        updateLinkInTree(sections, linkId, (l) => ({
+          ...l,
+          title: meta.title,
+          description: meta.description,
+          domain: meta.domain,
+          favicon_url: meta.favicon_url,
+          read_time_minutes: meta.read_time_minutes,
+        }))
       );
     } catch (err) {}
     setScrapingLinkIds((prev) => {
@@ -607,14 +753,8 @@ export default function LinkVault({ isSidebarOpen, onOpenSidebar }: LinkVaultPro
     });
   };
 
-  const handleDeleteLink = (sectionId: string, linkId: string) => {
-    saveSections(
-      sections.map((s) =>
-        s.id === sectionId
-          ? { ...s, links: s.links.filter((l) => l.id !== linkId), updated_at: new Date().toISOString() }
-          : s
-      )
-    );
+  const handleDeleteLink = (linkId: string) => {
+    saveSections(deleteLinkInTree(sections, linkId));
   };
 
   const handleCopyLink = (linkId: string, url: string) => {
@@ -623,7 +763,7 @@ export default function LinkVault({ isSidebarOpen, onOpenSidebar }: LinkVaultPro
     setTimeout(() => setCopiedLinkId(null), 1500);
   };
 
-  // ── Section Drag & Drop ───────────────────────────────────────
+  // ── Drag & Drop for Top-Level Sections ────────────────────────
 
   const handleSectionDragStart = (idx: number, e: React.DragEvent) => {
     setDraggedSectionIdx(idx);
@@ -649,12 +789,12 @@ export default function LinkVault({ isSidebarOpen, onOpenSidebar }: LinkVaultPro
     setDragOverSectionIdx(null);
   };
 
-  // ── Filtering ─────────────────────────────────────────────────
+  // ── Recursive Filtering ───────────────────────────────────────
 
-  const filteredSections = sections.map((section) => {
-    if (!searchQuery) return section;
-    const q = searchQuery.toLowerCase();
+  const filterSectionTree = (section: VaultSection, query: string): VaultSection | null => {
+    const q = query.toLowerCase();
     const matchesSection = section.title.toLowerCase().includes(q);
+
     const matchingLinks = section.links.filter(
       (l) =>
         l.title.toLowerCase().includes(q) ||
@@ -662,12 +802,30 @@ export default function LinkVault({ isSidebarOpen, onOpenSidebar }: LinkVaultPro
         (l.description || '').toLowerCase().includes(q) ||
         (l.domain || '').toLowerCase().includes(q)
     );
-    if (matchesSection) return { ...section, is_collapsed: false };
-    if (matchingLinks.length > 0) return { ...section, links: matchingLinks, is_collapsed: false };
-    return null;
-  }).filter(Boolean) as VaultSection[];
 
-  const totalLinks = sections.reduce((sum, s) => sum + s.links.length, 0);
+    const matchingSubsections = (section.subsections || [])
+      .map((sub) => filterSectionTree(sub, query))
+      .filter(Boolean) as VaultSection[];
+
+    if (matchesSection) {
+      return { ...section, is_collapsed: false };
+    }
+    if (matchingLinks.length > 0 || matchingSubsections.length > 0) {
+      return {
+        ...section,
+        links: matchingLinks.length > 0 ? matchingLinks : section.links,
+        subsections: matchingSubsections,
+        is_collapsed: false,
+      };
+    }
+    return null;
+  };
+
+  const filteredSections = searchQuery
+    ? (sections.map((s) => filterSectionTree(s, searchQuery)).filter(Boolean) as VaultSection[])
+    : sections;
+
+  const totalLinks = sections.reduce((sum, s) => sum + countTotalSectionLinks(s), 0);
 
   // ── Focus Refs ────────────────────────────────────────────────
 
@@ -676,6 +834,12 @@ export default function LinkVault({ isSidebarOpen, onOpenSidebar }: LinkVaultPro
       newSectionInputRef.current.focus();
     }
   }, [isCreatingSection]);
+
+  useEffect(() => {
+    if (creatingSubfolderTargetId && subfolderInputRef.current) {
+      subfolderInputRef.current.focus();
+    }
+  }, [creatingSubfolderTargetId]);
 
   useEffect(() => {
     if (addingLinkToSection && addLinkInputRef.current) {
@@ -690,6 +854,399 @@ export default function LinkVault({ isSidebarOpen, onOpenSidebar }: LinkVaultPro
   }, [renamingSectionId]);
 
   if (!isLoaded) return null;
+
+  // ── Recursive Section & Subfolder Renderer ────────────────────
+
+  const renderSectionCard = (section: VaultSection, depth = 0) => {
+    const colorCfg = getColorConfig(section.color);
+    const isCollapsed = section.is_collapsed;
+    const isTopLevel = depth === 0;
+    const totalCount = countTotalSectionLinks(section);
+    const hasSubsections = section.subsections && section.subsections.length > 0;
+
+    return (
+      <div
+        key={section.id}
+        className={`bg-white border rounded-lg shadow-xs overflow-hidden transition-all ${
+          isTopLevel ? 'border-neutral-200 mb-3' : 'border-neutral-200/80 my-2 ml-3 sm:ml-4 border-l-2'
+        }`}
+        style={!isTopLevel ? { borderLeftColor: 'var(--accent-color, #ff6600)' } : undefined}
+      >
+        {/* Section Header */}
+        <div
+          className={`flex items-center gap-2 px-3 py-2 cursor-pointer select-none ${
+            isTopLevel ? colorCfg.header : 'bg-neutral-50/90'
+          } border-b border-neutral-100 hover:bg-neutral-100/70 transition-all`}
+          onClick={() => handleToggleCollapse(section.id)}
+        >
+          {isTopLevel ? (
+            <>
+              <GripVertical className="w-3.5 h-3.5 text-neutral-300 shrink-0 cursor-grab" />
+              <span className={`w-2.5 h-2.5 rounded-full shrink-0 ${colorCfg.dot}`} />
+            </>
+          ) : (
+            <div className="flex items-center text-neutral-500 shrink-0">
+              {isCollapsed ? <Folder className="w-3.5 h-3.5" /> : <FolderOpen className="w-3.5 h-3.5 text-amber-500" />}
+            </div>
+          )}
+
+          {renamingSectionId === section.id ? (
+            <input
+              ref={renameInputRef}
+              type="text"
+              value={renameValue}
+              onChange={(e) => setRenameValue(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') handleRenameSection(section.id);
+                if (e.key === 'Escape') setRenamingSectionId(null);
+              }}
+              onBlur={() => handleRenameSection(section.id)}
+              onClick={(e) => e.stopPropagation()}
+              className="flex-1 text-xs font-bold bg-white border border-neutral-300 rounded px-2 py-0.5 outline-none focus:ring-2 focus:ring-indigo-500/20"
+            />
+          ) : (
+            <span className={`flex-1 text-xs font-bold ${isTopLevel ? 'text-neutral-800' : 'text-neutral-700'} truncate`}>
+              {section.title}
+            </span>
+          )}
+
+          {/* Badge count */}
+          <span className={`px-1.5 py-0.2 rounded text-[10px] font-bold ${colorCfg.bg} ${colorCfg.text} border ${colorCfg.border}`}>
+            {totalCount}
+          </span>
+
+          {/* Context 3-dots Menu */}
+          <div className="relative">
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                setSectionMenu(sectionMenu === section.id ? null : section.id);
+              }}
+              className="p-1 hover:bg-neutral-200/60 rounded text-neutral-400 hover:text-neutral-600 cursor-pointer"
+            >
+              <MoreHorizontal className="w-3.5 h-3.5" />
+            </button>
+            {sectionMenu === section.id && (
+              <div
+                className="absolute right-0 top-7 z-30 w-40 bg-white border border-neutral-200 rounded-md shadow-xl py-1 text-xs font-semibold animate-fade-in"
+                onClick={(e) => e.stopPropagation()}
+              >
+                <button
+                  type="button"
+                  onClick={() => {
+                    setCreatingSubfolderTargetId(section.id);
+                    setNewSubfolderTitle('');
+                    setSectionMenu(null);
+                  }}
+                  className="w-full px-3 py-1.5 hover:bg-neutral-50 flex items-center gap-2 text-left cursor-pointer text-neutral-700"
+                >
+                  <FolderPlus className="w-3 h-3 text-neutral-400" /> Add Subfolder
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setRenamingSectionId(section.id);
+                    setRenameValue(section.title);
+                    setSectionMenu(null);
+                  }}
+                  className="w-full px-3 py-1.5 hover:bg-neutral-50 flex items-center gap-2 text-left cursor-pointer text-neutral-700"
+                >
+                  <Edit2 className="w-3 h-3 text-neutral-400" /> Rename
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setBulkPasteSection(section.id);
+                    setSectionMenu(null);
+                  }}
+                  className="w-full px-3 py-1.5 hover:bg-neutral-50 flex items-center gap-2 text-left cursor-pointer text-neutral-700"
+                >
+                  <ClipboardPaste className="w-3 h-3 text-neutral-400" /> Bulk Paste Links
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setSectionToDelete(section);
+                    setSectionMenu(null);
+                  }}
+                  className="w-full px-3 py-1.5 hover:bg-red-50 flex items-center gap-2 text-left text-red-600 cursor-pointer"
+                >
+                  <Trash2 className="w-3 h-3 text-red-500" /> Delete {isTopLevel ? 'Section' : 'Folder'}
+                </button>
+              </div>
+            )}
+          </div>
+
+          {/* Expand/Collapse Chevron */}
+          {isCollapsed ? (
+            <ChevronRight className="w-4 h-4 text-neutral-400 shrink-0" />
+          ) : (
+            <ChevronDown className="w-4 h-4 text-neutral-400 shrink-0" />
+          )}
+        </div>
+
+        {/* Section Body (Expanded) */}
+        {!isCollapsed && (
+          <div className="divide-y divide-neutral-100">
+            {/* Inline Subfolder Creation Form */}
+            {creatingSubfolderTargetId === section.id && (
+              <div className="px-3 py-2 bg-amber-50/50 border-b border-amber-200/60 flex items-center gap-2 animate-fade-in">
+                <FolderPlus className="w-3.5 h-3.5 text-amber-600 shrink-0" />
+                <input
+                  ref={subfolderInputRef}
+                  type="text"
+                  value={newSubfolderTitle}
+                  onChange={(e) => setNewSubfolderTitle(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') handleCreateSubfolder(section.id);
+                    if (e.key === 'Escape') setCreatingSubfolderTargetId(null);
+                  }}
+                  placeholder="Subfolder name (e.g. Related Stuff)..."
+                  className="flex-1 text-xs bg-white border border-neutral-300 rounded px-2.5 py-1 outline-none focus:ring-2 focus:ring-indigo-500/20"
+                />
+                <button
+                  type="button"
+                  onClick={() => handleCreateSubfolder(section.id)}
+                  disabled={!newSubfolderTitle.trim()}
+                  className="px-2.5 py-1 text-xs font-bold bg-neutral-900 text-white rounded cursor-pointer disabled:opacity-40"
+                >
+                  Create
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setCreatingSubfolderTargetId(null)}
+                  className="p-1 text-neutral-400 hover:text-neutral-600 cursor-pointer"
+                >
+                  <X className="w-3.5 h-3.5" />
+                </button>
+              </div>
+            )}
+
+            {/* Nested Subsections / Subfolders */}
+            {hasSubsections && (
+              <div className="p-2 bg-neutral-50/30">
+                {section.subsections!.map((sub) => renderSectionCard(sub, depth + 1))}
+              </div>
+            )}
+
+            {/* Direct Links in This Section/Folder */}
+            {section.links.map((link) => {
+              const isScrapingThis = scrapingLinkIds.has(link.id);
+
+              return (
+                <div
+                  key={link.id}
+                  className="flex items-start gap-2.5 px-3 py-2 hover:bg-neutral-50/80 group transition-all"
+                >
+                  {/* Favicon */}
+                  <div className="mt-0.5 shrink-0">
+                    {link.favicon_url ? (
+                      <img
+                        src={link.favicon_url}
+                        alt=""
+                        className="w-4 h-4 rounded shrink-0 object-contain"
+                        onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }}
+                      />
+                    ) : (
+                      <LinkIcon className="w-4 h-4 text-neutral-300" />
+                    )}
+                  </div>
+
+                  {/* Clean Text Typography: Title, Domain, Read Time, Description (NO blurry thumbnail) */}
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-1.5 flex-wrap">
+                      <a
+                        href={link.url}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="text-xs font-bold text-neutral-900 hover:text-indigo-600 transition-colors truncate max-w-full"
+                      >
+                        {link.title || getDomain(link.url)}
+                      </a>
+                      {link.domain && (
+                        <span className="inline-flex items-center gap-0.5 px-1.5 py-0.2 bg-neutral-100 border border-neutral-200 text-neutral-500 rounded text-[9px] font-medium shrink-0">
+                          <Globe className="w-2.5 h-2.5 text-neutral-400" />
+                          {link.domain}
+                        </span>
+                      )}
+                      {link.read_time_minutes ? (
+                        <span className="inline-flex items-center gap-0.5 px-1.5 py-0.2 bg-neutral-50 border border-neutral-200 text-neutral-400 rounded text-[9px] shrink-0">
+                          <Clock className="w-2.5 h-2.5" />
+                          {link.read_time_minutes} min
+                        </span>
+                      ) : null}
+                    </div>
+
+                    {/* Scraped Description (clean subtitle) */}
+                    {link.description && (
+                      <p className="text-[11px] text-neutral-500 mt-0.5 line-clamp-2 leading-relaxed font-normal">
+                        {link.description}
+                      </p>
+                    )}
+
+                    <div className="text-[10px] text-neutral-400 mt-0.5 truncate font-mono">
+                      {link.url}
+                    </div>
+                  </div>
+
+                  {/* Link Hover Action Buttons */}
+                  <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity shrink-0 mt-0.5">
+                    <a
+                      href={link.url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      onClick={(e) => e.stopPropagation()}
+                      className="p-1 hover:bg-neutral-200/60 rounded text-neutral-400 hover:text-neutral-700 cursor-pointer"
+                      title="Open Link"
+                    >
+                      <ExternalLink className="w-3.5 h-3.5" />
+                    </a>
+                    <button
+                      type="button"
+                      onClick={() => handleCopyLink(link.id, link.url)}
+                      className="p-1 hover:bg-neutral-200/60 rounded text-neutral-400 hover:text-neutral-700 cursor-pointer"
+                      title="Copy Link"
+                    >
+                      {copiedLinkId === link.id ? (
+                        <Check className="w-3.5 h-3.5 text-emerald-500" />
+                      ) : (
+                        <Copy className="w-3.5 h-3.5" />
+                      )}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleRescrapeLink(link.id, link.url)}
+                      disabled={isScrapingThis}
+                      className="p-1 hover:bg-indigo-100 rounded text-neutral-400 hover:text-indigo-600 cursor-pointer disabled:opacity-50"
+                      title="Re-scrape Metadata"
+                    >
+                      <RefreshCw className={`w-3.5 h-3.5 ${isScrapingThis ? 'animate-spin text-indigo-500' : ''}`} />
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleDeleteLink(link.id)}
+                      className="p-1 hover:bg-red-100 rounded text-neutral-400 hover:text-red-600 cursor-pointer"
+                      title="Remove Link"
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+                </div>
+              );
+            })}
+
+            {/* Empty Folder State */}
+            {section.links.length === 0 && (!section.subsections || section.subsections.length === 0) && (
+              <div className="px-4 py-5 text-center text-neutral-400">
+                <Folder className="w-5 h-5 mx-auto mb-1.5 text-neutral-300" />
+                <p className="text-xs font-medium">Empty folder. Add links or subfolders below.</p>
+              </div>
+            )}
+
+            {/* Add Link / Subfolder Action Row */}
+            {addingLinkToSection === section.id ? (
+              <div className="px-3 py-2 bg-neutral-50/80 flex items-center gap-2">
+                <LinkIcon className="w-3.5 h-3.5 text-neutral-400 shrink-0" />
+                <input
+                  ref={addLinkInputRef}
+                  type="text"
+                  value={newLinkUrl}
+                  onChange={(e) => setNewLinkUrl(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') handleAddLink(section.id);
+                    if (e.key === 'Escape') { setAddingLinkToSection(null); setNewLinkUrl(''); }
+                  }}
+                  placeholder="Paste URL and press Enter (scraping metadata)..."
+                  className="flex-1 text-xs bg-white border border-neutral-200 rounded px-2.5 py-1.5 outline-none focus:ring-2 focus:ring-indigo-500/20"
+                  disabled={isFetchingTitle}
+                />
+                {isFetchingTitle && (
+                  <div className="flex items-center gap-1 text-[10px] text-indigo-600 font-semibold shrink-0">
+                    <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                    <span>Scraping...</span>
+                  </div>
+                )}
+                <button
+                  type="button"
+                  onClick={() => { setAddingLinkToSection(null); setNewLinkUrl(''); }}
+                  className="p-1 text-neutral-400 hover:text-neutral-600 cursor-pointer"
+                >
+                  <X className="w-3.5 h-3.5" />
+                </button>
+              </div>
+            ) : (
+              <div className="px-3 py-2 flex items-center gap-2.5 flex-wrap bg-white">
+                <button
+                  type="button"
+                  onClick={() => setAddingLinkToSection(section.id)}
+                  className="text-[11px] font-semibold text-neutral-500 hover:text-neutral-700 flex items-center gap-1 cursor-pointer"
+                >
+                  <Plus className="w-3 h-3" /> Add Link
+                </button>
+                <span className="text-neutral-200">|</span>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setCreatingSubfolderTargetId(section.id);
+                    setNewSubfolderTitle('');
+                  }}
+                  className="text-[11px] font-semibold text-neutral-500 hover:text-neutral-700 flex items-center gap-1 cursor-pointer"
+                >
+                  <FolderPlus className="w-3 h-3" /> Add Subfolder
+                </button>
+                <span className="text-neutral-200">|</span>
+                <button
+                  type="button"
+                  onClick={() => setBulkPasteSection(section.id)}
+                  className="text-[11px] font-semibold text-neutral-500 hover:text-neutral-700 flex items-center gap-1 cursor-pointer"
+                >
+                  <ClipboardPaste className="w-3 h-3" /> Bulk Paste
+                </button>
+              </div>
+            )}
+
+            {/* Bulk Paste Modal (inline) */}
+            {bulkPasteSection === section.id && (
+              <div className="px-3 py-3 bg-neutral-50/80 border-t border-neutral-100 animate-fade-in">
+                <h4 className="text-[11px] font-bold text-neutral-700 mb-1 flex items-center gap-1">
+                  <ClipboardPaste className="w-3 h-3" /> Bulk Paste Links into {section.title}
+                </h4>
+                <p className="text-[10px] text-neutral-400 mb-2">
+                  Paste links (one per line). All rich metadata, titles, and descriptions will be scraped automatically!
+                </p>
+                <textarea
+                  value={bulkPasteText}
+                  onChange={(e) => setBulkPasteText(e.target.value)}
+                  placeholder={"Paste one URL per line:\nraphael.ai\nkrea.ai\nmagnific.ai\n\nOr paste with descriptions:\n1. raphael.ai • unlimited AI image generation\n2. krea.ai • generate images in real time as you draw\n3. magnific.ai • AI image upscaling"}
+                  rows={5}
+                  className="w-full text-xs bg-white border border-neutral-200 rounded-md px-3 py-2 outline-none focus:ring-2 focus:ring-indigo-500/20 resize-none font-mono"
+                />
+                <div className="flex items-center justify-end gap-2 mt-2">
+                  <button
+                    type="button"
+                    onClick={() => { setBulkPasteSection(null); setBulkPasteText(''); }}
+                    className="px-3 py-1 text-xs font-bold text-neutral-600 hover:bg-neutral-200 rounded cursor-pointer"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleBulkPaste(section.id)}
+                    disabled={!bulkPasteText.trim() || isBulkAdding}
+                    className="px-3 py-1 text-xs font-bold bg-neutral-900 text-white hover:bg-neutral-800 rounded cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-1"
+                  >
+                    {isBulkAdding && <RefreshCw className="w-3 h-3 animate-spin" />}
+                    Add {bulkPasteText.split('\n').filter((l) => l.trim()).length} Links & Scrape Info
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+    );
+  };
 
   return (
     <div className="w-full h-full flex flex-col bg-white text-neutral-800 relative overflow-hidden select-none">
@@ -788,7 +1345,7 @@ export default function LinkVault({ isSidebarOpen, onOpenSidebar }: LinkVaultPro
       {/* ── Scrollable Sections Container ── */}
       <div className="flex-1 p-4 sm:p-6 overflow-y-auto bg-neutral-50/50">
 
-        {/* New Section Form */}
+        {/* New Top-Level Section Form */}
         {isCreatingSection && (
           <div className="mb-4 bg-white border border-neutral-200 rounded-lg p-4 shadow-xs animate-fade-in">
             <h3 className="font-bold text-xs text-neutral-700 mb-3 flex items-center gap-1.5">
@@ -799,7 +1356,7 @@ export default function LinkVault({ isSidebarOpen, onOpenSidebar }: LinkVaultPro
               type="text"
               value={newSectionTitle}
               onChange={(e) => setNewSectionTitle(e.target.value)}
-              onKeyDown={(e) => e.key === 'Enter' && handleCreateSection()}
+              onKeyDown={(e) => e.key === 'Enter' && handleCreateTopSection()}
               placeholder="Section name (e.g. Free AI Tools)"
               className="w-full px-3 py-2 text-xs border border-neutral-200 rounded-md outline-none focus:ring-2 focus:ring-indigo-500/20 mb-3"
             />
@@ -826,7 +1383,7 @@ export default function LinkVault({ isSidebarOpen, onOpenSidebar }: LinkVaultPro
               </button>
               <button
                 type="button"
-                onClick={handleCreateSection}
+                onClick={handleCreateTopSection}
                 disabled={!newSectionTitle.trim()}
                 className="px-3 py-1.5 text-xs font-bold bg-neutral-900 text-white hover:bg-neutral-800 rounded-md cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
               >
@@ -847,7 +1404,7 @@ export default function LinkVault({ isSidebarOpen, onOpenSidebar }: LinkVaultPro
               <p className="text-xs text-neutral-400 max-w-sm leading-relaxed mb-4">
                 {searchQuery
                   ? 'Try a different search term.'
-                  : 'Import your browser bookmarks file or create custom sections to organize links separately from your main dashboard.'}
+                  : 'Import your browser bookmarks file (with subfolders) or create custom sections to organize links separately from your main dashboard.'}
               </p>
               {!searchQuery && (
                 <div className="flex items-center justify-center gap-2">
@@ -877,11 +1434,9 @@ export default function LinkVault({ isSidebarOpen, onOpenSidebar }: LinkVaultPro
           </div>
         )}
 
-        {/* Sections */}
-        <div className="flex flex-col gap-3">
+        {/* Sections Tree */}
+        <div className="flex flex-col">
           {filteredSections.map((section, sectionIdx) => {
-            const colorCfg = getColorConfig(section.color);
-            const isCollapsed = section.is_collapsed;
             const isDraggingOver = dragOverSectionIdx === sectionIdx && draggedSectionIdx !== sectionIdx;
 
             return (
@@ -892,317 +1447,11 @@ export default function LinkVault({ isSidebarOpen, onOpenSidebar }: LinkVaultPro
                 onDragOver={(e) => handleSectionDragOver(sectionIdx, e)}
                 onDrop={() => handleSectionDrop(sectionIdx)}
                 onDragEnd={() => { setDraggedSectionIdx(null); setDragOverSectionIdx(null); }}
-                className={`bg-white border rounded-lg shadow-xs overflow-hidden transition-all ${
-                  isDraggingOver ? 'border-indigo-400 ring-2 ring-indigo-200' : 'border-neutral-200'
-                } ${draggedSectionIdx === sectionIdx ? 'opacity-50' : ''}`}
+                className={`transition-all ${isDraggingOver ? 'ring-2 ring-indigo-400 rounded-lg' : ''} ${
+                  draggedSectionIdx === sectionIdx ? 'opacity-50' : ''
+                }`}
               >
-                {/* Section Header */}
-                <div
-                  className={`flex items-center gap-2 px-3 py-2.5 cursor-pointer select-none ${colorCfg.header} border-b border-neutral-100 hover:bg-neutral-50/80 transition-all`}
-                  onClick={() => handleToggleCollapse(section.id)}
-                >
-                  <GripVertical className="w-3.5 h-3.5 text-neutral-300 shrink-0 cursor-grab" />
-                  <span className={`w-2.5 h-2.5 rounded-full shrink-0 ${colorCfg.dot}`} />
-
-                  {renamingSectionId === section.id ? (
-                    <input
-                      ref={renameInputRef}
-                      type="text"
-                      value={renameValue}
-                      onChange={(e) => setRenameValue(e.target.value)}
-                      onKeyDown={(e) => {
-                        if (e.key === 'Enter') handleRenameSection(section.id);
-                        if (e.key === 'Escape') setRenamingSectionId(null);
-                      }}
-                      onBlur={() => handleRenameSection(section.id)}
-                      onClick={(e) => e.stopPropagation()}
-                      className="flex-1 text-xs font-bold bg-white border border-neutral-300 rounded px-2 py-0.5 outline-none focus:ring-2 focus:ring-indigo-500/20"
-                    />
-                  ) : (
-                    <span className="flex-1 text-xs font-bold text-neutral-800 truncate">{section.title}</span>
-                  )}
-
-                  <span className={`px-1.5 py-0.5 rounded text-[10px] font-bold ${colorCfg.bg} ${colorCfg.text} border ${colorCfg.border}`}>
-                    {section.links.length}
-                  </span>
-
-                  {/* Section context menu */}
-                  <div className="relative">
-                    <button
-                      type="button"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        setSectionMenu(sectionMenu === section.id ? null : section.id);
-                      }}
-                      className="p-1 hover:bg-neutral-200/60 rounded text-neutral-400 hover:text-neutral-600 cursor-pointer"
-                    >
-                      <MoreHorizontal className="w-3.5 h-3.5" />
-                    </button>
-                    {sectionMenu === section.id && (
-                      <div
-                        className="absolute right-0 top-7 z-30 w-36 bg-white border border-neutral-200 rounded-md shadow-xl py-1 text-xs font-semibold animate-fade-in"
-                        onClick={(e) => e.stopPropagation()}
-                      >
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setRenamingSectionId(section.id);
-                            setRenameValue(section.title);
-                            setSectionMenu(null);
-                          }}
-                          className="w-full px-3 py-1.5 hover:bg-neutral-50 flex items-center gap-2 text-left cursor-pointer"
-                        >
-                          <Edit2 className="w-3 h-3 text-neutral-400" /> Rename
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setBulkPasteSection(section.id);
-                            setSectionMenu(null);
-                          }}
-                          className="w-full px-3 py-1.5 hover:bg-neutral-50 flex items-center gap-2 text-left cursor-pointer"
-                        >
-                          <ClipboardPaste className="w-3 h-3 text-neutral-400" /> Bulk Paste Links
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setSectionToDelete(section);
-                            setSectionMenu(null);
-                          }}
-                          className="w-full px-3 py-1.5 hover:bg-red-50 flex items-center gap-2 text-left text-red-600 cursor-pointer"
-                        >
-                          <Trash2 className="w-3 h-3 text-red-500" /> Delete Section
-                        </button>
-                      </div>
-                    )}
-                  </div>
-
-                  {isCollapsed ? (
-                    <ChevronRight className="w-4 h-4 text-neutral-400 shrink-0" />
-                  ) : (
-                    <ChevronDown className="w-4 h-4 text-neutral-400 shrink-0" />
-                  )}
-                </div>
-
-                {/* Section Body — Expanded */}
-                {!isCollapsed && (
-                  <div className="divide-y divide-neutral-100">
-                    {/* Links */}
-                    {section.links.map((link) => {
-                      const isScrapingThis = scrapingLinkIds.has(link.id);
-
-                      return (
-                        <div
-                          key={link.id}
-                          className="flex items-start gap-3 px-3 py-2.5 hover:bg-neutral-50/80 group transition-all"
-                        >
-                          {/* Favicon */}
-                          <div className="mt-0.5 shrink-0">
-                            {link.favicon_url ? (
-                              <img
-                                src={link.favicon_url}
-                                alt=""
-                                className="w-4 h-4 rounded shrink-0 object-contain"
-                                onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }}
-                              />
-                            ) : (
-                              <LinkIcon className="w-4 h-4 text-neutral-300" />
-                            )}
-                          </div>
-
-                          {/* Link Info (Title, Domain, Description, Read Time) */}
-                          <div className="flex-1 min-w-0">
-                            <div className="flex items-center gap-2 flex-wrap">
-                              <a
-                                href={link.url}
-                                target="_blank"
-                                rel="noopener noreferrer"
-                                className="text-xs font-bold text-neutral-900 hover:text-indigo-600 transition-colors truncate max-w-full"
-                              >
-                                {link.title || getDomain(link.url)}
-                              </a>
-                              {link.domain && (
-                                <span className="inline-flex items-center gap-0.5 px-1.5 py-0.2 bg-neutral-100 border border-neutral-200 text-neutral-500 rounded text-[9px] font-medium shrink-0">
-                                  <Globe className="w-2.5 h-2.5 text-neutral-400" />
-                                  {link.domain}
-                                </span>
-                              )}
-                              {link.read_time_minutes ? (
-                                <span className="inline-flex items-center gap-0.5 px-1.5 py-0.2 bg-neutral-50 border border-neutral-200 text-neutral-400 rounded text-[9px] shrink-0">
-                                  <Clock className="w-2.5 h-2.5" />
-                                  {link.read_time_minutes} min
-                                </span>
-                              ) : null}
-                            </div>
-
-                            {/* Scraped Description */}
-                            {link.description && (
-                              <p className="text-[11px] text-neutral-500 mt-0.5 line-clamp-2 leading-relaxed font-normal">
-                                {link.description}
-                              </p>
-                            )}
-
-                            <div className="text-[10px] text-neutral-400 mt-0.5 truncate font-mono">
-                              {link.url}
-                            </div>
-                          </div>
-
-                          {/* Scraped Thumbnail Preview (if available) */}
-                          {link.thumbnail_url && (
-                            <div className="hidden sm:block shrink-0 w-16 h-11 rounded border border-neutral-200 overflow-hidden bg-neutral-100">
-                              <img
-                                src={link.thumbnail_url}
-                                alt=""
-                                className="w-full h-full object-cover"
-                                onError={(e) => { (e.target as HTMLElement).parentElement!.style.display = 'none'; }}
-                              />
-                            </div>
-                          )}
-
-                          {/* Link Actions */}
-                          <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity shrink-0 mt-0.5">
-                            <a
-                              href={link.url}
-                              target="_blank"
-                              rel="noopener noreferrer"
-                              onClick={(e) => e.stopPropagation()}
-                              className="p-1 hover:bg-neutral-200/60 rounded text-neutral-400 hover:text-neutral-700 cursor-pointer"
-                              title="Open Link"
-                            >
-                              <ExternalLink className="w-3.5 h-3.5" />
-                            </a>
-                            <button
-                              type="button"
-                              onClick={() => handleCopyLink(link.id, link.url)}
-                              className="p-1 hover:bg-neutral-200/60 rounded text-neutral-400 hover:text-neutral-700 cursor-pointer"
-                              title="Copy Link"
-                            >
-                              {copiedLinkId === link.id ? (
-                                <Check className="w-3.5 h-3.5 text-emerald-500" />
-                              ) : (
-                                <Copy className="w-3.5 h-3.5" />
-                              )}
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => handleRescrapeLink(section.id, link.id, link.url)}
-                              disabled={isScrapingThis}
-                              className="p-1 hover:bg-indigo-100 rounded text-neutral-400 hover:text-indigo-600 cursor-pointer disabled:opacity-50"
-                              title="Re-scrape Metadata"
-                            >
-                              <RefreshCw className={`w-3.5 h-3.5 ${isScrapingThis ? 'animate-spin text-indigo-500' : ''}`} />
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => handleDeleteLink(section.id, link.id)}
-                              className="p-1 hover:bg-red-100 rounded text-neutral-400 hover:text-red-600 cursor-pointer"
-                              title="Remove Link"
-                            >
-                              <Trash2 className="w-3.5 h-3.5" />
-                            </button>
-                          </div>
-                        </div>
-                      );
-                    })}
-
-                    {/* Empty section state */}
-                    {section.links.length === 0 && (
-                      <div className="px-4 py-6 text-center text-neutral-400">
-                        <LinkIcon className="w-6 h-6 mx-auto mb-2 text-neutral-300" />
-                        <p className="text-xs font-medium">No links yet. Add one below.</p>
-                      </div>
-                    )}
-
-                    {/* Add Link Input (inline) */}
-                    {addingLinkToSection === section.id ? (
-                      <div className="px-3 py-2.5 bg-neutral-50/80 flex items-center gap-2">
-                        <LinkIcon className="w-3.5 h-3.5 text-neutral-400 shrink-0" />
-                        <input
-                          ref={addLinkInputRef}
-                          type="text"
-                          value={newLinkUrl}
-                          onChange={(e) => setNewLinkUrl(e.target.value)}
-                          onKeyDown={(e) => {
-                            if (e.key === 'Enter') handleAddLink(section.id);
-                            if (e.key === 'Escape') { setAddingLinkToSection(null); setNewLinkUrl(''); }
-                          }}
-                          placeholder="Paste URL and press Enter (scraping metadata)..."
-                          className="flex-1 text-xs bg-white border border-neutral-200 rounded px-2.5 py-1.5 outline-none focus:ring-2 focus:ring-indigo-500/20"
-                          disabled={isFetchingTitle}
-                        />
-                        {isFetchingTitle && (
-                          <div className="flex items-center gap-1 text-[10px] text-indigo-600 font-semibold shrink-0">
-                            <RefreshCw className="w-3.5 h-3.5 animate-spin" />
-                            <span>Scraping...</span>
-                          </div>
-                        )}
-                        <button
-                          type="button"
-                          onClick={() => { setAddingLinkToSection(null); setNewLinkUrl(''); }}
-                          className="p-1 text-neutral-400 hover:text-neutral-600 cursor-pointer"
-                        >
-                          <X className="w-3.5 h-3.5" />
-                        </button>
-                      </div>
-                    ) : (
-                      <div className="px-3 py-2 flex items-center gap-2">
-                        <button
-                          type="button"
-                          onClick={() => setAddingLinkToSection(section.id)}
-                          className="text-[11px] font-semibold text-neutral-500 hover:text-neutral-700 flex items-center gap-1 cursor-pointer"
-                        >
-                          <Plus className="w-3 h-3" /> Add Link
-                        </button>
-                        <span className="text-neutral-200">|</span>
-                        <button
-                          type="button"
-                          onClick={() => setBulkPasteSection(section.id)}
-                          className="text-[11px] font-semibold text-neutral-500 hover:text-neutral-700 flex items-center gap-1 cursor-pointer"
-                        >
-                          <ClipboardPaste className="w-3 h-3" /> Bulk Paste
-                        </button>
-                      </div>
-                    )}
-
-                    {/* Bulk Paste Modal (inline) */}
-                    {bulkPasteSection === section.id && (
-                      <div className="px-3 py-3 bg-neutral-50/80 border-t border-neutral-100 animate-fade-in">
-                        <h4 className="text-[11px] font-bold text-neutral-700 mb-1 flex items-center gap-1">
-                          <ClipboardPaste className="w-3 h-3" /> Bulk Paste Links
-                        </h4>
-                        <p className="text-[10px] text-neutral-400 mb-2">
-                          Paste links (one per line). All rich metadata, titles, descriptions, and thumbnails will be scraped automatically!
-                        </p>
-                        <textarea
-                          value={bulkPasteText}
-                          onChange={(e) => setBulkPasteText(e.target.value)}
-                          placeholder={"Paste one URL per line:\nraphael.ai\nkrea.ai\nmagnific.ai\n\nOr paste with descriptions:\n1. raphael.ai • unlimited AI image generation\n2. krea.ai • generate images in real time as you draw\n3. magnific.ai • AI image upscaling"}
-                          rows={5}
-                          className="w-full text-xs bg-white border border-neutral-200 rounded-md px-3 py-2 outline-none focus:ring-2 focus:ring-indigo-500/20 resize-none font-mono"
-                        />
-                        <div className="flex items-center justify-end gap-2 mt-2">
-                          <button
-                            type="button"
-                            onClick={() => { setBulkPasteSection(null); setBulkPasteText(''); }}
-                            className="px-3 py-1 text-xs font-bold text-neutral-600 hover:bg-neutral-200 rounded cursor-pointer"
-                          >
-                            Cancel
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => handleBulkPaste(section.id)}
-                            disabled={!bulkPasteText.trim() || isBulkAdding}
-                            className="px-3 py-1 text-xs font-bold bg-neutral-900 text-white hover:bg-neutral-800 rounded cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-1"
-                          >
-                            {isBulkAdding && <RefreshCw className="w-3 h-3 animate-spin" />}
-                            Add {bulkPasteText.split('\n').filter((l) => l.trim()).length} Links & Scrape Info
-                          </button>
-                        </div>
-                      </div>
-                    )}
-                  </div>
-                )}
+                {renderSectionCard(section, 0)}
               </div>
             );
           })}
@@ -1229,7 +1478,7 @@ export default function LinkVault({ isSidebarOpen, onOpenSidebar }: LinkVaultPro
 
             <p className="text-xs text-neutral-500 leading-relaxed mb-4">
               Upload your exported browser bookmarks file (<strong>.html</strong> or <strong>.json</strong>).
-              Nidus will automatically create <strong>Vault Sections</strong> matching your browser's bookmark folders and start scraping rich metadata!
+              Nidus will automatically preserve your <strong>nested subfolder hierarchy</strong> into Vault Sections & Subfolders and scrape rich metadata!
             </p>
 
             {/* Hidden native file input */}
@@ -1249,7 +1498,7 @@ export default function LinkVault({ isSidebarOpen, onOpenSidebar }: LinkVaultPro
               >
                 <FileText className="w-8 h-8 text-neutral-400 mb-2" />
                 <span className="text-xs font-bold text-neutral-700 mb-1">Click to select bookmarks file</span>
-                <span className="text-[10px] text-neutral-400">Supports HTML bookmark exports from Chrome, Brave, Edge, Firefox, Safari, and JSON</span>
+                <span className="text-[10px] text-neutral-400">Supports nested folder trees from Chrome, Brave, Edge, Firefox, Safari, and JSON</span>
               </div>
             )}
 
@@ -1257,7 +1506,7 @@ export default function LinkVault({ isSidebarOpen, onOpenSidebar }: LinkVaultPro
             {importStatus === 'parsing' && (
               <div className="p-6 flex flex-col items-center justify-center text-center gap-2 bg-neutral-50 rounded-lg mb-4">
                 <RefreshCw className="w-6 h-6 text-indigo-600 animate-spin" />
-                <span className="text-xs font-bold text-neutral-700">Reading & Parsing Bookmarks...</span>
+                <span className="text-xs font-bold text-neutral-700">Reading & Parsing Folders Hierarchy...</span>
               </div>
             )}
 
@@ -1265,7 +1514,7 @@ export default function LinkVault({ isSidebarOpen, onOpenSidebar }: LinkVaultPro
             {importStatus === 'saving' && (
               <div className="p-6 flex flex-col items-center justify-center text-center gap-2 bg-neutral-50 rounded-lg mb-4">
                 <RefreshCw className="w-6 h-6 text-emerald-600 animate-spin" />
-                <span className="text-xs font-bold text-neutral-700">Organizing into Vault Sections...</span>
+                <span className="text-xs font-bold text-neutral-700">Building Nested Vault Folders...</span>
               </div>
             )}
 
@@ -1276,8 +1525,8 @@ export default function LinkVault({ isSidebarOpen, onOpenSidebar }: LinkVaultPro
                 <div>
                   <h4 className="text-xs font-bold text-emerald-900 mb-0.5">Import Completed!</h4>
                   <p className="text-[11px] text-emerald-700 leading-relaxed">
-                    Successfully organized <strong>{importStats.linksCount} links</strong> into <strong>{importStats.sectionsCount} sections</strong>.
-                    Metadata and thumbnails are scraping in the background!
+                    Successfully imported <strong>{importStats.linksCount} links</strong> into <strong>{importStats.sectionsCount} root folders</strong> with full subfolder hierarchy.
+                    Metadata is scraping in the background!
                   </p>
                 </div>
               </div>
@@ -1313,13 +1562,13 @@ export default function LinkVault({ isSidebarOpen, onOpenSidebar }: LinkVaultPro
           <div className="bg-white border border-neutral-300 shadow-2xl p-4 sm:p-5 w-full max-w-xs text-neutral-800">
             <div className="flex items-center gap-2 text-red-600 mb-2">
               <Trash2 className="w-4 h-4 shrink-0" />
-              <h3 className="font-extrabold text-xs sm:text-sm">Delete Section?</h3>
+              <h3 className="font-extrabold text-xs sm:text-sm">Delete Folder/Section?</h3>
             </div>
             <p className="text-xs text-neutral-600 mb-1 leading-relaxed">
               Are you sure you want to delete <strong className="text-neutral-900">"{sectionToDelete.title}"</strong>?
             </p>
             <p className="text-[10px] text-neutral-400 mb-4">
-              This will permanently remove all {sectionToDelete.links.length} link(s) in this section.
+              This will permanently remove all {countTotalSectionLinks(sectionToDelete)} link(s) and subfolders inside it.
             </p>
             <div className="flex items-center justify-end gap-2 text-xs font-bold">
               <button

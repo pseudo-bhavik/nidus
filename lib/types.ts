@@ -54,6 +54,7 @@ export interface VaultSection {
   title: string;
   color: string;
   links: VaultLink[];
+  subsections?: VaultSection[];
   is_collapsed: boolean;
   position: number;
   created_at: string;
