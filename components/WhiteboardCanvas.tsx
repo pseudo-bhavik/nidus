@@ -67,6 +67,7 @@ export default function WhiteboardCanvas({
   // Track loaded doc & debounce save
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const canvasContainerRef = useRef<HTMLDivElement | null>(null);
 
   // Key to force re-mount Excalidraw when switching tabs
   const [excalidrawKey, setExcalidrawKey] = useState(0);
@@ -173,21 +174,58 @@ export default function WhiteboardCanvas({
     return () => { isMounted = false; };
   }, []);
 
-  // Trigger layout refresh when Whiteboard Canvas mounts to ensure layout matches set Application Zoom
+  // Counter-zoom: apply inverse zoom on the Excalidraw canvas container to neutralize
+  // document-level CSS zoom distortion on pointer coordinates.
+  // The toolbar/tabs above still render at the user's chosen application zoom.
+  // The canvas container gets zoom = 1/appZoom so Excalidraw internally sees effective zoom=1.
   useEffect(() => {
-    const triggerRefresh = () => {
+    const applyCounterZoom = () => {
+      const el = canvasContainerRef.current;
+      if (!el) return;
+
+      const docZoom = parseFloat(document.documentElement.style.zoom || '1') || 1;
+      if (Math.abs(docZoom - 1) < 0.001) {
+        // No counter-zoom needed when app zoom is 1
+        el.style.zoom = '';
+        el.style.width = '';
+        el.style.height = '';
+      } else {
+        const inverse = 1 / docZoom;
+        el.style.zoom = inverse.toString();
+        // Scale dimensions up so the counter-zoomed container still fills the parent
+        el.style.width = `${docZoom * 100}%`;
+        el.style.height = `${docZoom * 100}%`;
+      }
+
+      // Tell Excalidraw to recalculate its bounding rect
       window.dispatchEvent(new Event('resize'));
       if (excalidrawAPI && typeof excalidrawAPI.refresh === 'function') {
         excalidrawAPI.refresh();
       }
     };
 
-    const timer1 = setTimeout(triggerRefresh, 100);
-    const timer2 = setTimeout(triggerRefresh, 300);
+    // Apply immediately
+    applyCounterZoom();
+    const t1 = setTimeout(applyCounterZoom, 100);
+    const t2 = setTimeout(applyCounterZoom, 350);
+
+    // Watch for external changes to document.documentElement.style.zoom
+    const observer = new MutationObserver(() => {
+      applyCounterZoom();
+    });
+    observer.observe(document.documentElement, { attributes: true, attributeFilter: ['style'] });
 
     return () => {
-      clearTimeout(timer1);
-      clearTimeout(timer2);
+      observer.disconnect();
+      clearTimeout(t1);
+      clearTimeout(t2);
+      // Reset counter-zoom on unmount
+      const el = canvasContainerRef.current;
+      if (el) {
+        el.style.zoom = '';
+        el.style.width = '';
+        el.style.height = '';
+      }
     };
   }, [excalidrawAPI]);
 
@@ -705,8 +743,8 @@ export default function WhiteboardCanvas({
         </div>
       </div>
 
-      {/* Excalidraw Canvas — Full Size Container */}
-      <div className="flex-1 w-full relative overflow-hidden touch-none">
+      {/* Excalidraw Canvas — Full Size Container with counter-zoom for pointer alignment */}
+      <div className="flex-1 w-full relative overflow-hidden touch-none" ref={canvasContainerRef}>
         {isDataLoaded ? (
           <ExcalidrawWrapper
             key={`${activeDocId}-${excalidrawKey}`}
