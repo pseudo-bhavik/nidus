@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Search, Terminal, ArrowRight, CornerDownLeft, Inbox, Trash2, Library, CheckSquare, Plus, FileSpreadsheet, StickyNote, PenTool } from 'lucide-react';
+import { Search, Terminal, ArrowRight, CornerDownLeft, Inbox, Trash2, Library, CheckSquare, Plus, FileSpreadsheet, StickyNote, PenTool, Archive, Upload } from 'lucide-react';
 import { Bookmark } from '../lib/types';
 
 interface CommandPaletteProps {
@@ -97,6 +97,20 @@ export default function CommandPalette({
       subtitle: 'Draw, sketch diagrams, and take visual canvas notes',
       icon: <PenTool className="w-4 h-4 text-hn-orange" style={{ color: 'var(--accent-color)' }} />,
       action: () => { onNavigateView('canvas'); onClose(); },
+    },
+    {
+      id: 'go-vault',
+      title: 'Open Link Vault',
+      subtitle: 'Access stored links, folders & bulk bookmark storage',
+      icon: <Archive className="w-4 h-4 text-purple-500" />,
+      action: () => { onNavigateView('vault'); onClose(); },
+    },
+    {
+      id: 'vault-import',
+      title: 'Import Bookmarks to Vault...',
+      subtitle: 'Import browser HTML/JSON bookmarks preserving nested folders',
+      icon: <Upload className="w-4 h-4 text-purple-500" />,
+      action: () => { onNavigateView('vault'); onClose(); },
     },
     {
       id: 'go-unsorted',

@@ -6,7 +6,7 @@ import {
   ExternalLink, Copy, Check, Trash2, Edit2, GripVertical,
   Link as LinkIcon, ClipboardPaste, MoreHorizontal, RefreshCw, Clock, Globe,
   Upload, Download, FileText, CheckCircle, AlertTriangle, Folder, FolderOpen, FolderPlus,
-  CheckSquare, Square
+  CheckSquare, Square, Edit3, Trash
 } from 'lucide-react';
 import { VaultSection, VaultLink } from '../lib/types';
 
@@ -83,6 +83,15 @@ interface LinkVaultProps {
   onOpenSidebar?: () => void;
 }
 
+interface RightClickMenuState {
+  type: 'link' | 'section';
+  x: number;
+  y: number;
+  link?: VaultLink;
+  sectionId?: string;
+  section?: VaultSection;
+}
+
 export default function LinkVault({ isSidebarOpen, onOpenSidebar }: LinkVaultProps) {
   const [sections, setSections] = useState<VaultSection[]>([]);
   const [isLoaded, setIsLoaded] = useState(false);
@@ -91,8 +100,13 @@ export default function LinkVault({ isSidebarOpen, onOpenSidebar }: LinkVaultPro
   const [scrapingLinkIds, setScrapingLinkIds] = useState<Set<string>>(new Set());
   const [scrapingProgress, setScrapingProgress] = useState<{ current: number; total: number } | null>(null);
 
-  // Bulk Selection State
+  // Bulk Selection States
   const [selectedLinkIds, setSelectedLinkIds] = useState<Set<string>>(new Set());
+  const [selectedSectionIds, setSelectedSectionIds] = useState<Set<string>>(new Set());
+
+  // Right Click Custom Context Menu
+  const [contextMenu, setContextMenu] = useState<RightClickMenuState | null>(null);
+  const [copiedContextLink, setCopiedContextLink] = useState(false);
 
   // Top Section creation
   const [isCreatingSection, setIsCreatingSection] = useState(false);
@@ -128,11 +142,12 @@ export default function LinkVault({ isSidebarOpen, onOpenSidebar }: LinkVaultPro
   const [renameValue, setRenameValue] = useState('');
   const renameInputRef = useRef<HTMLInputElement>(null);
 
-  // Section context menu
+  // Section 3-dots dropdown menu
   const [sectionMenu, setSectionMenu] = useState<string | null>(null);
 
   // Section delete confirmation
   const [sectionToDelete, setSectionToDelete] = useState<VaultSection | null>(null);
+  const [isConfirmingWipeAll, setIsConfirmingWipeAll] = useState(false);
 
   // Drag state for top-level sections
   const [draggedSectionIdx, setDraggedSectionIdx] = useState<number | null>(null);
@@ -159,6 +174,26 @@ export default function LinkVault({ isSidebarOpen, onOpenSidebar }: LinkVaultPro
       localStorage.setItem(STORAGE_KEY, JSON.stringify(updated));
     } catch (e) {}
   }, []);
+
+  // Global listener to close context menu on click or escape
+  useEffect(() => {
+    const handleGlobalClick = () => {
+      if (contextMenu) setContextMenu(null);
+      if (sectionMenu) setSectionMenu(null);
+    };
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        setContextMenu(null);
+        setSectionMenu(null);
+      }
+    };
+    window.addEventListener('click', handleGlobalClick);
+    window.addEventListener('keydown', handleKeyDown);
+    return () => {
+      window.removeEventListener('click', handleGlobalClick);
+      window.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [contextMenu, sectionMenu]);
 
   // ── Scraper Helper (POST /api/scrape) ─────────────────────────
 
@@ -265,6 +300,19 @@ export default function LinkVault({ isSidebarOpen, onOpenSidebar }: LinkVaultPro
     });
   };
 
+  const toggleSelectSection = (sectionId: string, e?: React.MouseEvent) => {
+    if (e) e.stopPropagation();
+    setSelectedSectionIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(sectionId)) {
+        next.delete(sectionId);
+      } else {
+        next.add(sectionId);
+      }
+      return next;
+    });
+  };
+
   const toggleSelectSectionLinks = (section: VaultSection) => {
     const sectionLinkIds = getAllSectionLinkIds(section);
     const allSelected = sectionLinkIds.every((id) => selectedLinkIds.has(id));
@@ -280,7 +328,7 @@ export default function LinkVault({ isSidebarOpen, onOpenSidebar }: LinkVaultPro
     });
   };
 
-  const handleBulkDeleteSelected = () => {
+  const handleBulkDeleteSelectedLinks = () => {
     if (selectedLinkIds.size === 0) return;
     const idsToDelete = new Set(selectedLinkIds);
 
@@ -297,6 +345,24 @@ export default function LinkVault({ isSidebarOpen, onOpenSidebar }: LinkVaultPro
     setSelectedLinkIds(new Set());
   };
 
+  const handleBulkDeleteSelectedSections = () => {
+    if (selectedSectionIds.size === 0) return;
+    const idsToDelete = new Set(selectedSectionIds);
+
+    const removeSections = (tree: VaultSection[]): VaultSection[] => {
+      return tree
+        .filter((sec) => !idsToDelete.has(sec.id))
+        .map((sec) => ({
+          ...sec,
+          subsections: sec.subsections ? removeSections(sec.subsections) : [],
+        }));
+    };
+
+    const updated = removeSections(sections);
+    saveSections(updated);
+    setSelectedSectionIds(new Set());
+  };
+
   const handleDeleteAllSectionLinks = (sectionId: string) => {
     const updated = updateSectionInTree(sections, sectionId, (sec) => ({
       ...sec,
@@ -307,7 +373,14 @@ export default function LinkVault({ isSidebarOpen, onOpenSidebar }: LinkVaultPro
     setSectionMenu(null);
   };
 
-  // ── Bulletproof Native DOM Parser for Nested Bookmarks ────────
+  const handleWipeEntireVault = () => {
+    saveSections([]);
+    setSelectedLinkIds(new Set());
+    setSelectedSectionIds(new Set());
+    setIsConfirmingWipeAll(false);
+  };
+
+  // ── True Multi-Level Bookmark Parser (Separating Root Collections) ──
 
   interface ParsedFolderNode {
     title: string;
@@ -319,12 +392,12 @@ export default function LinkVault({ isSidebarOpen, onOpenSidebar }: LinkVaultPro
     const parser = new DOMParser();
     const doc = parser.parseFromString(htmlText, 'text/html');
 
-    // Helper to crawl a DL element recursively
-    const crawlDL = (dlElement: Element): ParsedFolderNode[] => {
-      const result: ParsedFolderNode[] = [];
-      const children = Array.from(dlElement.children);
+    // Recursively parse a DL container
+    const crawlContainer = (container: Element): { links: { url: string; title: string }[]; subfolders: ParsedFolderNode[] } => {
+      const links: { url: string; title: string }[] = [];
+      const subfolders: ParsedFolderNode[] = [];
 
-      let currentLinksBucket: { url: string; title: string }[] = [];
+      const children = Array.from(container.children);
 
       for (let i = 0; i < children.length; i++) {
         const child = children[i];
@@ -337,55 +410,32 @@ export default function LinkVault({ isSidebarOpen, onOpenSidebar }: LinkVaultPro
 
           if (h3) {
             const folderName = (h3.textContent || 'Folder').trim();
-            const subTree = innerDL ? crawlDL(innerDL) : [];
+            const innerParsed = innerDL ? crawlContainer(innerDL) : { links: [], subfolders: [] };
 
-            // Collect direct links inside innerDL (links not inside a sub-DT with H3)
-            const directFolderLinks: { url: string; title: string }[] = [];
-            if (innerDL) {
-              const subDTs = Array.from(innerDL.children).filter((el) => el.tagName === 'DT');
-              subDTs.forEach((subDT) => {
-                const subH3 = subDT.querySelector(':scope > h3') || subDT.querySelector('h3');
-                const subA = subDT.querySelector(':scope > a') || subDT.querySelector('a');
-                if (subA && !subH3) {
-                  const href = subA.getAttribute('href') || '';
-                  if (href.startsWith('http://') || href.startsWith('https://')) {
-                    directFolderLinks.push({ url: href, title: (subA.textContent || href).trim() });
-                  }
-                }
-              });
-            }
-
-            result.push({
+            subfolders.push({
               title: folderName,
-              links: directFolderLinks,
-              subfolders: subTree,
+              links: innerParsed.links,
+              subfolders: innerParsed.subfolders,
             });
           } else if (a) {
             const href = a.getAttribute('href') || '';
             if (href.startsWith('http://') || href.startsWith('https://')) {
-              currentLinksBucket.push({ url: href, title: (a.textContent || href).trim() });
+              links.push({ url: href, title: (a.textContent || href).trim() });
             }
           }
         } else if (child.tagName === 'A') {
           const href = child.getAttribute('href') || '';
           if (href.startsWith('http://') || href.startsWith('https://')) {
-            currentLinksBucket.push({ url: href, title: (child.textContent || href).trim() });
+            links.push({ url: href, title: (child.textContent || href).trim() });
           }
         } else if (child.tagName === 'DL') {
-          const sub = crawlDL(child);
-          result.push(...sub);
+          const innerParsed = crawlContainer(child);
+          links.push(...innerParsed.links);
+          subfolders.push(...innerParsed.subfolders);
         }
       }
 
-      if (currentLinksBucket.length > 0) {
-        result.unshift({
-          title: 'General Bookmarks',
-          links: currentLinksBucket,
-          subfolders: [],
-        });
-      }
-
-      return result;
+      return { links, subfolders };
     };
 
     const rootDL = doc.querySelector('dl');
@@ -394,40 +444,57 @@ export default function LinkVault({ isSidebarOpen, onOpenSidebar }: LinkVaultPro
         .map((a) => ({ url: a.getAttribute('href') || '', title: (a.textContent || a.getAttribute('href') || '').trim() }))
         .filter((l) => l.url.startsWith('http://') || l.url.startsWith('https://'));
 
-      return [{ title: 'Imported Links', links: allAnchors, subfolders: [] }];
+      return [{ title: 'Imported Bookmarks', links: allAnchors, subfolders: [] }];
     }
 
-    const rawTree = crawlDL(rootDL);
+    const rootTree = crawlContainer(rootDL);
 
-    // Unwrap generic top browser wrappers like "Bookmarks bar", "Bookmarks", "Bookmarks menu"
-    const unwrapGenericRoots = (nodes: ParsedFolderNode[]): ParsedFolderNode[] => {
-      const unwrapped: ParsedFolderNode[] = [];
-      nodes.forEach((node) => {
-        const lower = node.title.toLowerCase();
-        if (
+    // Unpack generic browser wrappers (e.g. "Bookmarks bar") so each primary user folder becomes a separate Vault Section!
+    const finalTopSections: ParsedFolderNode[] = [];
+
+    const unwrapRoots = (folders: ParsedFolderNode[]) => {
+      folders.forEach((f) => {
+        const lower = f.title.toLowerCase();
+        const isGenericWrapper =
           lower === 'bookmarks bar' ||
           lower === 'bookmarks menu' ||
           lower === 'other bookmarks' ||
           lower === 'synced bookmarks' ||
           lower === 'mobile bookmarks' ||
-          lower === 'bookmarks'
-        ) {
-          if (node.subfolders.length > 0) {
-            if (node.links.length > 0) {
-              unwrapped.push({ title: 'General Bookmarks', links: node.links, subfolders: [] });
-            }
-            unwrapped.push(...node.subfolders);
-          } else {
-            unwrapped.push(node);
+          lower === 'bookmarks';
+
+        if (isGenericWrapper) {
+          // If browser root container has direct links, place them in a dedicated Section
+          if (f.links.length > 0) {
+            finalTopSections.push({
+              title: f.title || 'Bookmarks Bar',
+              links: f.links,
+              subfolders: [],
+            });
           }
+          // Promote all inner folders to top-level sections!
+          unwrapRoots(f.subfolders);
         } else {
-          unwrapped.push(node);
+          // Real collection folder (e.g. "AI Tools", "Dev", "Design") -> KEEP AS INDEPENDENT TOP SECTION!
+          // All subfolders inside it (e.g. "Related Stuff") remain nested in f.subfolders!
+          finalTopSections.push(f);
         }
       });
-      return unwrapped;
     };
 
-    return unwrapGenericRoots(rawTree);
+    if (rootTree.links.length > 0) {
+      finalTopSections.push({
+        title: 'General Bookmarks',
+        links: rootTree.links,
+        subfolders: [],
+      });
+    }
+
+    unwrapRoots(rootTree.subfolders);
+
+    return finalTopSections.length > 0
+      ? finalTopSections
+      : [{ title: 'General Bookmarks', links: rootTree.links, subfolders: rootTree.subfolders }];
   };
 
   const convertParsedTreeToVault = (
@@ -550,7 +617,16 @@ export default function LinkVault({ isSidebarOpen, onOpenSidebar }: LinkVaultPro
       Object.keys(data.roots).forEach((key) => {
         const root = data.roots[key];
         if (root && root.children) {
-          sectionsResult.push(processFolder(root.name || key, root.children));
+          // If root is bookmarks_bar, promote its direct children folders to top-level sections
+          if (key === 'bookmark_bar' || key === 'other') {
+            root.children.forEach((child: any) => {
+              if (child.children) {
+                sectionsResult.push(processFolder(child.name || 'Folder', child.children));
+              }
+            });
+          } else {
+            sectionsResult.push(processFolder(root.name || key, root.children));
+          }
         }
       });
     } else if (data.children) {
@@ -735,6 +811,11 @@ export default function LinkVault({ isSidebarOpen, onOpenSidebar }: LinkVaultPro
   const handleDeleteSection = () => {
     if (!sectionToDelete) return;
     saveSections(deleteSectionFromTree(sections, sectionToDelete.id));
+    setSelectedSectionIds((prev) => {
+      const next = new Set(prev);
+      next.delete(sectionToDelete.id);
+      return next;
+    });
     setSectionToDelete(null);
   };
 
@@ -978,6 +1059,33 @@ export default function LinkVault({ isSidebarOpen, onOpenSidebar }: LinkVaultPro
 
   if (!isLoaded) return null;
 
+  // ── Right-Click Context Menu Handlers ─────────────────────────
+
+  const handleLinkContextMenu = (e: React.MouseEvent, link: VaultLink, sectionId: string) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setCopiedContextLink(false);
+    setContextMenu({
+      type: 'link',
+      x: e.clientX,
+      y: e.clientY,
+      link,
+      sectionId,
+    });
+  };
+
+  const handleSectionContextMenu = (e: React.MouseEvent, section: VaultSection) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setContextMenu({
+      type: 'section',
+      x: e.clientX,
+      y: e.clientY,
+      section,
+      sectionId: section.id,
+    });
+  };
+
   // ── Recursive Section & Subfolder Renderer ────────────────────
 
   const renderSectionCard = (section: VaultSection, depth = 0) => {
@@ -988,13 +1096,14 @@ export default function LinkVault({ isSidebarOpen, onOpenSidebar }: LinkVaultPro
     const hasSubsections = section.subsections && section.subsections.length > 0;
     const allSecLinkIds = getAllSectionLinkIds(section);
     const areAllSelected = allSecLinkIds.length > 0 && allSecLinkIds.every((id) => selectedLinkIds.has(id));
+    const isSectionSelected = selectedSectionIds.has(section.id);
 
     return (
       <div
         key={section.id}
         className={`bg-white border rounded-lg shadow-xs overflow-hidden transition-all ${
           isTopLevel ? 'border-neutral-200 mb-3' : 'border-neutral-200/80 my-2 ml-3 sm:ml-5 border-l-2'
-        }`}
+        } ${isSectionSelected ? 'ring-2 ring-indigo-500/50' : ''}`}
         style={!isTopLevel ? { borderLeftColor: 'var(--accent-color, #ff6600)' } : undefined}
       >
         {/* Section Header */}
@@ -1003,7 +1112,22 @@ export default function LinkVault({ isSidebarOpen, onOpenSidebar }: LinkVaultPro
             isTopLevel ? colorCfg.header : 'bg-neutral-50/90'
           } border-b border-neutral-100 hover:bg-neutral-100/70 transition-all`}
           onClick={() => handleToggleCollapse(section.id)}
+          onContextMenu={(e) => handleSectionContextMenu(e, section)}
         >
+          {/* Section Selection Checkbox (for bulk collection delete) */}
+          <button
+            type="button"
+            onClick={(e) => toggleSelectSection(section.id, e)}
+            className="text-neutral-400 hover:text-indigo-600 cursor-pointer shrink-0"
+            title="Select collection for bulk actions"
+          >
+            {isSectionSelected ? (
+              <CheckSquare className="w-3.5 h-3.5 text-indigo-600" />
+            ) : (
+              <Square className="w-3.5 h-3.5 text-neutral-300 opacity-60 hover:opacity-100" />
+            )}
+          </button>
+
           {isTopLevel ? (
             <>
               <GripVertical className="w-3.5 h-3.5 text-neutral-300 shrink-0 cursor-grab" />
@@ -1039,6 +1163,19 @@ export default function LinkVault({ isSidebarOpen, onOpenSidebar }: LinkVaultPro
           <span className={`px-1.5 py-0.2 rounded text-[10px] font-bold ${colorCfg.bg} ${colorCfg.text} border ${colorCfg.border}`}>
             {totalCount}
           </span>
+
+          {/* Fast Delete Button (Hover) */}
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              setSectionToDelete(section);
+            }}
+            className="p-1 text-neutral-300 hover:text-red-600 rounded transition-colors cursor-pointer"
+            title={`Delete ${isTopLevel ? 'Section' : 'Folder'}`}
+          >
+            <Trash2 className="w-3.5 h-3.5" />
+          </button>
 
           {/* Context 3-dots Menu */}
           <div className="relative">
@@ -1182,6 +1319,7 @@ export default function LinkVault({ isSidebarOpen, onOpenSidebar }: LinkVaultPro
               return (
                 <div
                   key={link.id}
+                  onContextMenu={(e) => handleLinkContextMenu(e, link, section.id)}
                   className={`flex items-start gap-2.5 px-3 py-2 transition-all ${
                     isSelected ? 'bg-indigo-50/60' : 'hover:bg-neutral-50/80'
                   } group`}
@@ -1296,11 +1434,18 @@ export default function LinkVault({ isSidebarOpen, onOpenSidebar }: LinkVaultPro
               );
             })}
 
-            {/* Empty Folder State */}
+            {/* Empty Folder State with Explicit Delete Button */}
             {section.links.length === 0 && (!section.subsections || section.subsections.length === 0) && (
-              <div className="px-4 py-5 text-center text-neutral-400">
+              <div className="px-4 py-5 text-center text-neutral-400 flex flex-col items-center justify-center">
                 <Folder className="w-5 h-5 mx-auto mb-1.5 text-neutral-300" />
-                <p className="text-xs font-medium">Empty folder. Add links or subfolders below.</p>
+                <p className="text-xs font-medium mb-2">Empty folder. Add links or subfolders below.</p>
+                <button
+                  type="button"
+                  onClick={() => setSectionToDelete(section)}
+                  className="px-2.5 py-1 text-[11px] font-bold text-red-600 hover:bg-red-50 border border-red-200 rounded cursor-pointer transition-all flex items-center gap-1"
+                >
+                  <Trash2 className="w-3 h-3" /> Delete Empty Folder
+                </button>
               </div>
             )}
 
@@ -1428,7 +1573,7 @@ export default function LinkVault({ isSidebarOpen, onOpenSidebar }: LinkVaultPro
             <Archive className="w-4.5 h-4.5 shrink-0" style={{ color: 'var(--accent-color)' }} />
             <h1 className="font-bold text-sm text-neutral-900 tracking-tight">Link Vault</h1>
             <span className="px-2 py-0.5 bg-neutral-100 border border-neutral-200 rounded-full text-[10px] font-bold text-neutral-600">
-              {totalLinks} links
+              {totalLinks} links • {sections.length} collections
             </span>
             {scrapingProgress && (
               <div className="flex items-center gap-1.5 px-2 py-0.5 bg-indigo-50 border border-indigo-200 rounded-full text-[10px] font-bold text-indigo-700 animate-pulse">
@@ -1503,7 +1648,7 @@ export default function LinkVault({ isSidebarOpen, onOpenSidebar }: LinkVaultPro
       </div>
 
       {/* ── Scrollable Sections Container ── */}
-      <div className="flex-1 p-4 sm:p-6 overflow-y-auto bg-neutral-50/50 pb-20">
+      <div className="flex-1 p-4 sm:p-6 overflow-y-auto bg-neutral-50/50 pb-24">
 
         {/* New Top-Level Section Form */}
         {isCreatingSection && (
@@ -1618,28 +1763,215 @@ export default function LinkVault({ isSidebarOpen, onOpenSidebar }: LinkVaultPro
         </div>
       </div>
 
-      {/* ── Floating Bulk Action Bar ── */}
-      {selectedLinkIds.size > 0 && (
-        <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-40 bg-neutral-900 text-white px-4 py-2.5 rounded-lg shadow-2xl flex items-center gap-3 border border-neutral-700 animate-fade-in text-xs font-bold pointer-events-auto">
-          <span className="flex items-center gap-1.5 text-amber-400">
-            <CheckSquare className="w-4 h-4" />
-            {selectedLinkIds.size} link{selectedLinkIds.size > 1 ? 's' : ''} selected
-          </span>
+      {/* ── Floating Bulk Action Bar (For Selected Links & Collections) ── */}
+      {(selectedLinkIds.size > 0 || selectedSectionIds.size > 0) && (
+        <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-40 bg-neutral-900 text-white px-4 py-2.5 rounded-lg shadow-2xl flex items-center gap-3 border border-neutral-700 animate-fade-in text-xs font-bold pointer-events-auto flex-wrap max-w-xl">
+          {selectedLinkIds.size > 0 && (
+            <span className="flex items-center gap-1.5 text-amber-400">
+              <CheckSquare className="w-4 h-4" />
+              {selectedLinkIds.size} link{selectedLinkIds.size > 1 ? 's' : ''}
+            </span>
+          )}
+          {selectedSectionIds.size > 0 && (
+            <span className="flex items-center gap-1.5 text-purple-400">
+              <Folder className="w-4 h-4" />
+              {selectedSectionIds.size} collection{selectedSectionIds.size > 1 ? 's' : ''}
+            </span>
+          )}
+
           <button
             type="button"
-            onClick={() => setSelectedLinkIds(new Set())}
-            className="px-2.5 py-1 bg-neutral-800 hover:bg-neutral-700 rounded text-neutral-300 hover:text-white cursor-pointer transition-all"
+            onClick={() => {
+              setSelectedLinkIds(new Set());
+              setSelectedSectionIds(new Set());
+            }}
+            className="px-2.5 py-1 bg-neutral-800 hover:bg-neutral-700 rounded text-neutral-300 hover:text-white cursor-pointer transition-all ml-auto"
           >
             Deselect All
           </button>
-          <button
-            type="button"
-            onClick={handleBulkDeleteSelected}
-            className="px-3 py-1 bg-red-600 hover:bg-red-700 text-white rounded cursor-pointer flex items-center gap-1.5 shadow-xs transition-all"
-          >
-            <Trash2 className="w-3.5 h-3.5" />
-            <span>Delete Selected ({selectedLinkIds.size})</span>
-          </button>
+
+          {selectedLinkIds.size > 0 && (
+            <button
+              type="button"
+              onClick={handleBulkDeleteSelectedLinks}
+              className="px-3 py-1 bg-red-600 hover:bg-red-700 text-white rounded cursor-pointer flex items-center gap-1.5 shadow-xs transition-all"
+            >
+              <Trash2 className="w-3.5 h-3.5" />
+              <span>Delete Links ({selectedLinkIds.size})</span>
+            </button>
+          )}
+
+          {selectedSectionIds.size > 0 && (
+            <button
+              type="button"
+              onClick={handleBulkDeleteSelectedSections}
+              className="px-3 py-1 bg-red-700 hover:bg-red-800 text-white rounded cursor-pointer flex items-center gap-1.5 shadow-xs transition-all"
+            >
+              <Trash className="w-3.5 h-3.5" />
+              <span>Delete Collections ({selectedSectionIds.size})</span>
+            </button>
+          )}
+        </div>
+      )}
+
+      {/* ── Right-Click Floating Context Menu (Exact Same Popup as Bookmarks Page) ── */}
+      {contextMenu && (
+        <div
+          style={{
+            left: Math.min(contextMenu.x, typeof window !== 'undefined' ? window.innerWidth - 190 : contextMenu.x),
+            top: Math.min(contextMenu.y, typeof window !== 'undefined' ? window.innerHeight - 200 : contextMenu.y),
+          }}
+          className="fixed z-50 w-48 rounded-md border border-neutral-200/80 bg-white shadow-2xl py-1 text-xs text-neutral-800 font-semibold select-none divide-y divide-neutral-100 animate-fade-in"
+          onClick={(e) => e.stopPropagation()}
+        >
+          {contextMenu.type === 'link' && contextMenu.link && (
+            <>
+              <div className="py-0.5">
+                <button
+                  type="button"
+                  onClick={() => {
+                    window.open(contextMenu.link!.url, '_blank');
+                    setContextMenu(null);
+                  }}
+                  className="w-full px-3 py-1.5 hover:bg-neutral-50 flex items-center gap-2 text-left cursor-pointer text-neutral-700"
+                >
+                  <ExternalLink className="w-3.5 h-3.5 text-neutral-400" />
+                  <span>Open Link</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    try { navigator.clipboard.writeText(contextMenu.link!.url); } catch (e) {}
+                    setCopiedContextLink(true);
+                    setTimeout(() => setContextMenu(null), 400);
+                  }}
+                  className="w-full px-3 py-1.5 hover:bg-neutral-50 flex items-center gap-2 text-left cursor-pointer text-neutral-700"
+                >
+                  {copiedContextLink ? (
+                    <>
+                      <Check className="w-3.5 h-3.5 text-emerald-600" />
+                      <span className="text-emerald-600 font-bold">Link Copied!</span>
+                    </>
+                  ) : (
+                    <>
+                      <Copy className="w-3.5 h-3.5 text-neutral-400" />
+                      <span>Copy Link</span>
+                    </>
+                  )}
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    handleRescrapeLink(contextMenu.link!.id, contextMenu.link!.url);
+                    setContextMenu(null);
+                  }}
+                  className="w-full px-3 py-1.5 hover:bg-neutral-50 flex items-center gap-2 text-left cursor-pointer text-neutral-700"
+                >
+                  <RefreshCw className="w-3.5 h-3.5 text-neutral-400" />
+                  <span>Re-scrape Metadata</span>
+                </button>
+              </div>
+
+              <div className="py-0.5">
+                <button
+                  type="button"
+                  onClick={() => {
+                    handleDeleteLink(contextMenu.link!.id);
+                    setContextMenu(null);
+                  }}
+                  className="w-full px-3 py-1.5 hover:bg-red-50 text-red-600 flex items-center gap-2 text-left cursor-pointer font-bold"
+                >
+                  <Trash2 className="w-3.5 h-3.5 text-red-500" />
+                  <span>Delete Link</span>
+                </button>
+              </div>
+            </>
+          )}
+
+          {contextMenu.type === 'section' && contextMenu.section && (
+            <>
+              <div className="py-0.5">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setCreatingSubfolderTargetId(contextMenu.section!.id);
+                    setNewSubfolderTitle('');
+                    setContextMenu(null);
+                  }}
+                  className="w-full px-3 py-1.5 hover:bg-neutral-50 flex items-center gap-2 text-left cursor-pointer text-neutral-700"
+                >
+                  <FolderPlus className="w-3.5 h-3.5 text-neutral-400" />
+                  <span>Add Subfolder</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    setBulkPasteSection(contextMenu.section!.id);
+                    setContextMenu(null);
+                  }}
+                  className="w-full px-3 py-1.5 hover:bg-neutral-50 flex items-center gap-2 text-left cursor-pointer text-neutral-700"
+                >
+                  <ClipboardPaste className="w-3.5 h-3.5 text-neutral-400" />
+                  <span>Bulk Paste Links</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    toggleSelectSectionLinks(contextMenu.section!);
+                    setContextMenu(null);
+                  }}
+                  className="w-full px-3 py-1.5 hover:bg-neutral-50 flex items-center gap-2 text-left cursor-pointer text-neutral-700"
+                >
+                  <CheckSquare className="w-3.5 h-3.5 text-neutral-400" />
+                  <span>Select All Links</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    setRenamingSectionId(contextMenu.section!.id);
+                    setRenameValue(contextMenu.section!.title);
+                    setContextMenu(null);
+                  }}
+                  className="w-full px-3 py-1.5 hover:bg-neutral-50 flex items-center gap-2 text-left cursor-pointer text-neutral-700"
+                >
+                  <Edit3 className="w-3.5 h-3.5 text-neutral-400" />
+                  <span>Rename Folder</span>
+                </button>
+              </div>
+
+              <div className="py-0.5">
+                {contextMenu.section.links.length > 0 && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      handleDeleteAllSectionLinks(contextMenu.section!.id);
+                      setContextMenu(null);
+                    }}
+                    className="w-full px-3 py-1.5 hover:bg-red-50 text-red-600 flex items-center gap-2 text-left cursor-pointer font-bold"
+                  >
+                    <Trash className="w-3.5 h-3.5 text-red-500" />
+                    <span>Clear All Links</span>
+                  </button>
+                )}
+                <button
+                  type="button"
+                  onClick={() => {
+                    setSectionToDelete(contextMenu.section!);
+                    setContextMenu(null);
+                  }}
+                  className="w-full px-3 py-1.5 hover:bg-red-50 text-red-600 flex items-center gap-2 text-left cursor-pointer font-bold"
+                >
+                  <Trash2 className="w-3.5 h-3.5 text-red-500" />
+                  <span>Delete Folder</span>
+                </button>
+              </div>
+            </>
+          )}
         </div>
       )}
 
@@ -1663,7 +1995,7 @@ export default function LinkVault({ isSidebarOpen, onOpenSidebar }: LinkVaultPro
 
             <p className="text-xs text-neutral-500 leading-relaxed mb-4">
               Upload your exported browser bookmarks file (<strong>.html</strong> or <strong>.json</strong>).
-              Nidus will automatically preserve your <strong>nested subfolder hierarchy</strong> into Vault Sections & Subfolders and scrape rich metadata!
+              Nidus separates your main collections into independent sections and preserves their nested subfolders!
             </p>
 
             {/* Hidden native file input */}
@@ -1699,7 +2031,7 @@ export default function LinkVault({ isSidebarOpen, onOpenSidebar }: LinkVaultPro
             {importStatus === 'saving' && (
               <div className="p-6 flex flex-col items-center justify-center text-center gap-2 bg-neutral-50 rounded-lg mb-4">
                 <RefreshCw className="w-6 h-6 text-emerald-600 animate-spin" />
-                <span className="text-xs font-bold text-neutral-700">Building Nested Vault Folders...</span>
+                <span className="text-xs font-bold text-neutral-700">Building Distinct Sections & Nested Folders...</span>
               </div>
             )}
 
@@ -1710,7 +2042,7 @@ export default function LinkVault({ isSidebarOpen, onOpenSidebar }: LinkVaultPro
                 <div>
                   <h4 className="text-xs font-bold text-emerald-900 mb-0.5">Import Completed!</h4>
                   <p className="text-[11px] text-emerald-700 leading-relaxed">
-                    Successfully imported <strong>{importStats.linksCount} links</strong> into <strong>{importStats.sectionsCount} root folders</strong> with full subfolder hierarchy.
+                    Successfully created <strong>{importStats.sectionsCount} collection sections</strong> with <strong>{importStats.linksCount} links</strong> and nested subfolders.
                     Metadata is scraping in the background!
                   </p>
                 </div>
