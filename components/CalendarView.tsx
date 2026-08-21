@@ -161,6 +161,9 @@ export default function CalendarView({ isSidebarOpen, onOpenSidebar }: CalendarV
   // Day Overflow Popover in Month View
   const [overflowPopoverDay, setOverflowPopoverDay] = useState<string | null>(null);
 
+  // Day Events Viewer Modal (Tapped Day)
+  const [selectedDayDetails, setSelectedDayDetails] = useState<string | null>(null);
+
   // .ics Import Modal
   const [isIcsImportModalOpen, setIsIcsImportModalOpen] = useState(false);
   const [icsImportStatus, setIcsImportStatus] = useState<'idle' | 'parsing' | 'success' | 'error'>('idle');
@@ -359,11 +362,16 @@ export default function CalendarView({ isSidebarOpen, onOpenSidebar }: CalendarV
     const startH = presetHour !== undefined ? presetHour : 9;
     const endH = (startH + 1) % 24;
 
-    // Fetch user email if available
+    // Auto-fetch saved Telegram Chat ID and Default Alert Email from localStorage & user session
     let defaultEmail = '';
+    let defaultTg = '';
     try {
-      const { data: { session } } = await supabase.auth.getSession();
-      if (session?.user?.email) defaultEmail = session.user.email;
+      defaultTg = localStorage.getItem('nidus_telegram_chat_id') || '';
+      defaultEmail = localStorage.getItem('nidus_default_alert_email') || '';
+      if (!defaultEmail) {
+        const { data: { session } } = await supabase.auth.getSession();
+        if (session?.user?.email) defaultEmail = session.user.email;
+      }
     } catch (e) {}
 
     setEditingEvent(null);
@@ -382,10 +390,10 @@ export default function CalendarView({ isSidebarOpen, onOpenSidebar }: CalendarV
     setFormReminderType('none');
     setFormReminderCustomDate(dateStr);
     setFormReminderCustomTime(`${String(Math.max(0, startH - 3)).padStart(2, '0')}:00`);
-    setFormReminderChannelEmail(true);
+    setFormReminderChannelEmail(Boolean(defaultEmail));
     setFormReminderEmail(defaultEmail);
-    setFormReminderChannelTelegram(false);
-    setFormReminderTelegramChatId('');
+    setFormReminderChannelTelegram(Boolean(defaultTg));
+    setFormReminderTelegramChatId(defaultTg);
     setTestNotifyStatus('idle');
     setTestNotifyMsg('');
     setIsEventModalOpen(true);
@@ -399,12 +407,15 @@ export default function CalendarView({ isSidebarOpen, onOpenSidebar }: CalendarV
     const endD = new Date(evt.end_time);
 
     let defaultEmail = evt.reminder_email || '';
-    if (!defaultEmail) {
-      try {
+    let defaultTg = evt.reminder_telegram_chat_id || '';
+    try {
+      if (!defaultTg) defaultTg = localStorage.getItem('nidus_telegram_chat_id') || '';
+      if (!defaultEmail) defaultEmail = localStorage.getItem('nidus_default_alert_email') || '';
+      if (!defaultEmail) {
         const { data: { session } } = await supabase.auth.getSession();
         if (session?.user?.email) defaultEmail = session.user.email;
-      } catch (e) {}
-    }
+      }
+    } catch (e) {}
 
     setFormStartDate(toDateString(startD));
     setFormEndDate(toDateString(endD));
@@ -427,10 +438,10 @@ export default function CalendarView({ isSidebarOpen, onOpenSidebar }: CalendarV
       setFormReminderCustomDate(toDateString(startD));
       setFormReminderCustomTime(toTimeString(startD));
     }
-    setFormReminderChannelEmail(evt.reminder_channel_email ?? true);
+    setFormReminderChannelEmail(evt.reminder_channel_email ?? Boolean(defaultEmail));
     setFormReminderEmail(defaultEmail);
-    setFormReminderChannelTelegram(evt.reminder_channel_telegram ?? false);
-    setFormReminderTelegramChatId(evt.reminder_telegram_chat_id || '');
+    setFormReminderChannelTelegram(evt.reminder_channel_telegram ?? Boolean(defaultTg));
+    setFormReminderTelegramChatId(defaultTg);
     setTestNotifyStatus('idle');
     setTestNotifyMsg('');
     setIsEventModalOpen(true);
@@ -708,7 +719,7 @@ export default function CalendarView({ isSidebarOpen, onOpenSidebar }: CalendarV
         document.activeElement instanceof HTMLElement &&
         (document.activeElement.tagName === 'INPUT' || document.activeElement.tagName === 'TEXTAREA');
 
-      if (isEventModalOpen || isIcsImportModalOpen || eventToDelete || overflowPopoverDay) {
+      if (isEventModalOpen || isIcsImportModalOpen || eventToDelete || overflowPopoverDay || selectedDayDetails) {
         if (e.key === 'Escape') {
           e.preventDefault();
           e.stopPropagation();
@@ -717,6 +728,7 @@ export default function CalendarView({ isSidebarOpen, onOpenSidebar }: CalendarV
           setIsIcsImportModalOpen(false);
           setEventToDelete(null);
           setOverflowPopoverDay(null);
+          setSelectedDayDetails(null);
         }
         return;
       }
@@ -1044,7 +1056,7 @@ export default function CalendarView({ isSidebarOpen, onOpenSidebar }: CalendarV
                 return (
                   <div
                     key={`${cell.dateStr}-${idx}`}
-                    onClick={() => openCreateModal(cell.dateStr)}
+                    onClick={() => setSelectedDayDetails(cell.dateStr)}
                     className={`min-h-[105px] sm:min-h-[120px] p-2 flex flex-col transition-colors cursor-pointer group ${
                       cell.isCurrentMonth ? 'bg-white hover:bg-neutral-50/80' : 'bg-neutral-50/50 text-neutral-400'
                     }`}
@@ -1122,7 +1134,7 @@ export default function CalendarView({ isSidebarOpen, onOpenSidebar }: CalendarV
                           type="button"
                           onClick={(e) => {
                             e.stopPropagation();
-                            setOverflowPopoverDay(overflowPopoverDay === cell.dateStr ? null : cell.dateStr);
+                            setSelectedDayDetails(cell.dateStr);
                           }}
                           className="text-[11px] font-bold text-neutral-600 hover:text-neutral-900 text-left px-1.5 py-0.5 hover:bg-neutral-100 rounded cursor-pointer"
                         >
@@ -1514,12 +1526,16 @@ export default function CalendarView({ isSidebarOpen, onOpenSidebar }: CalendarV
                         return (
                           <span
                             key={dayNum}
-                            className={`w-6 h-6 mx-auto flex items-center justify-center rounded-full ${
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setSelectedDayDetails(dateStr);
+                            }}
+                            className={`w-6 h-6 mx-auto flex items-center justify-center rounded-full cursor-pointer hover:ring-2 hover:ring-indigo-400 transition-all ${
                               isToday
                                 ? 'bg-[#ff6600] text-white font-bold'
                                 : hasEvents
-                                ? 'bg-indigo-100 text-indigo-800 font-bold'
-                                : 'text-neutral-700'
+                                ? 'bg-indigo-100 text-indigo-800 font-bold hover:bg-indigo-200'
+                                : 'text-neutral-700 hover:bg-neutral-100'
                             }`}
                           >
                             {dayNum}
@@ -1534,6 +1550,219 @@ export default function CalendarView({ isSidebarOpen, onOpenSidebar }: CalendarV
           </div>
         )}
       </div>
+
+      {/* ── Day Events Inspection & Management Modal ── */}
+      {selectedDayDetails && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40 backdrop-blur-xs animate-fade-in">
+          <div className="bg-white border border-neutral-300 rounded-2xl shadow-2xl p-6 w-full max-w-lg text-neutral-800 animate-scale-in flex flex-col max-h-[85vh]">
+            {/* Modal Header */}
+            <div className="flex items-center justify-between pb-3.5 border-b border-neutral-100 mb-4">
+              <div className="flex items-center gap-2.5">
+                <div className="w-9 h-9 rounded-xl bg-orange-50 border border-orange-200/80 flex items-center justify-center text-[#ff6600]">
+                  <CalendarIcon className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="font-extrabold text-base text-neutral-900 leading-tight">
+                    {(() => {
+                      const d = new Date(`${selectedDayDetails}T00:00:00`);
+                      return `${DAY_NAMES_SHORT[d.getDay()]}, ${MONTH_NAMES[d.getMonth()]} ${d.getDate()}, ${d.getFullYear()}`;
+                    })()}
+                  </h3>
+                  <span className="text-xs text-neutral-500 font-semibold">
+                    {(eventsByDate[selectedDayDetails] || []).length} scheduled item(s)
+                  </span>
+                </div>
+              </div>
+
+              <div className="flex items-center gap-1.5">
+                <button
+                  type="button"
+                  onClick={() => {
+                    const d = new Date(`${selectedDayDetails}T00:00:00`);
+                    setCurrentDate(d);
+                    setViewMode('day');
+                    setSelectedDayDetails(null);
+                  }}
+                  className="px-2.5 py-1.5 bg-neutral-100 hover:bg-neutral-200 text-neutral-700 text-xs font-bold rounded-lg cursor-pointer transition-colors"
+                  title="Open 24-hour Day Timeline"
+                >
+                  Timeline
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setSelectedDayDetails(null)}
+                  className="p-1.5 text-neutral-400 hover:text-neutral-600 hover:bg-neutral-100 rounded-lg cursor-pointer transition-colors"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+            </div>
+
+            {/* Events List for this Day */}
+            <div className="flex-1 overflow-y-auto flex flex-col gap-2.5 pr-1 py-1">
+              {(eventsByDate[selectedDayDetails] || []).length === 0 ? (
+                <div className="py-12 text-center text-neutral-400 flex flex-col items-center justify-center">
+                  <Clock className="w-10 h-10 text-neutral-300 mb-2" />
+                  <p className="font-bold text-sm text-neutral-700">No events on this day</p>
+                  <p className="text-xs text-neutral-400 mt-0.5 mb-4">Click below to schedule an event or task.</p>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const day = selectedDayDetails;
+                      setSelectedDayDetails(null);
+                      openCreateModal(day);
+                    }}
+                    className="px-4 py-2 bg-neutral-900 hover:bg-neutral-800 text-white rounded-lg text-xs font-extrabold flex items-center gap-1.5 cursor-pointer shadow-xs"
+                  >
+                    <Plus className="w-4 h-4" /> Add Event
+                  </button>
+                </div>
+              ) : (
+                (eventsByDate[selectedDayDetails] || []).map((evt) => {
+                  const colorCfg = getColorConfig(evt.color);
+                  const isTask = evt.is_task;
+                  const isDone = evt.is_completed;
+
+                  return (
+                    <div
+                      key={evt.id}
+                      onClick={() => {
+                        setSelectedDayDetails(null);
+                        openEditModal(evt);
+                      }}
+                      className={`p-3.5 rounded-xl border transition-all cursor-pointer hover:shadow-sm ${
+                        colorCfg.bg
+                      } ${colorCfg.border} ${isDone ? 'opacity-55' : ''}`}
+                    >
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="flex items-start gap-2.5 min-w-0 flex-1">
+                          {isTask ? (
+                            <button
+                              type="button"
+                              onClick={(e) => handleToggleTaskComplete(evt.id, e)}
+                              className="mt-0.5 hover:scale-110 cursor-pointer shrink-0"
+                            >
+                              {isDone ? (
+                                <CheckSquare className="w-4 h-4 text-emerald-600" />
+                              ) : (
+                                <Square className="w-4 h-4 text-neutral-400" />
+                              )}
+                            </button>
+                          ) : (
+                            <span className={`w-3 h-3 rounded-full mt-1 shrink-0 ${colorCfg.badge}`} />
+                          )}
+
+                          <div className="min-w-0 flex-1">
+                            <div className="flex items-center gap-2 flex-wrap">
+                              <h4 className={`text-xs sm:text-sm font-extrabold text-neutral-900 ${isDone ? 'line-through' : ''}`}>
+                                {evt.title}
+                              </h4>
+                              {evt.category && (
+                                <span className="px-1.5 py-0.5 bg-white/80 border border-neutral-200 text-neutral-600 rounded text-[10px] font-bold">
+                                  {evt.category}
+                                </span>
+                              )}
+                              {evt.reminder_type && evt.reminder_type !== 'none' && (
+                                <span className="inline-flex items-center gap-1 text-[10px] bg-orange-50 text-[#ff6600] border border-orange-200 px-1.5 py-0.2 rounded-full font-bold">
+                                  <Bell className="w-2.5 h-2.5" />
+                                  {evt.reminder_type === '3h' ? '3h before' : evt.reminder_type === '1h' ? '1h before' : evt.reminder_type === '30m' ? '30m before' : evt.reminder_type === 'at_event' ? 'At start' : 'Reminder'}
+                                </span>
+                              )}
+                              {evt.recurrence_rule && (
+                                <span className="inline-flex items-center gap-1 text-[10px] text-neutral-500 font-medium">
+                                  <Repeat className="w-3 h-3" />
+                                  {evt.recurrence_rule}
+                                </span>
+                              )}
+                            </div>
+
+                            <div className="text-[11px] font-mono font-semibold text-neutral-600 mt-1">
+                              {evt.is_all_day ? (
+                                'All Day Event'
+                              ) : (
+                                `${formatTime12h(toTimeString(new Date(evt.start_time)))} – ${formatTime12h(toTimeString(new Date(evt.end_time)))}`
+                              )}
+                            </div>
+
+                            {evt.description && (
+                              <p className="text-xs text-neutral-600 mt-1.5 line-clamp-2 leading-relaxed">
+                                {evt.description}
+                              </p>
+                            )}
+
+                            {evt.location_url && (
+                              <a
+                                href={evt.location_url}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                onClick={(e) => e.stopPropagation()}
+                                className="inline-flex items-center gap-1 text-xs text-indigo-600 hover:underline mt-1.5 font-medium"
+                              >
+                                <ExternalLink className="w-3 h-3" />
+                                <span>{evt.location_url}</span>
+                              </a>
+                            )}
+                          </div>
+                        </div>
+
+                        <div className="flex items-center gap-1 shrink-0">
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setSelectedDayDetails(null);
+                              openEditModal(evt);
+                            }}
+                            className="p-1.5 text-neutral-500 hover:text-neutral-800 hover:bg-white/80 rounded-lg cursor-pointer transition-colors"
+                            title="Edit"
+                          >
+                            <Edit3 className="w-3.5 h-3.5" />
+                          </button>
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setEventToDelete(evt);
+                            }}
+                            className="p-1.5 text-neutral-400 hover:text-red-600 hover:bg-white/80 rounded-lg cursor-pointer transition-colors"
+                            title="Delete"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })
+              )}
+            </div>
+
+            {/* Modal Bottom Actions */}
+            <div className="flex items-center justify-between pt-3.5 border-t border-neutral-100 mt-3">
+              <button
+                type="button"
+                onClick={() => {
+                  const day = selectedDayDetails;
+                  setSelectedDayDetails(null);
+                  openCreateModal(day);
+                }}
+                className="px-4 py-2 bg-neutral-900 hover:bg-neutral-800 text-white rounded-lg text-xs font-extrabold flex items-center gap-1.5 cursor-pointer shadow-xs transition-all"
+              >
+                <Plus className="w-3.5 h-3.5" />
+                <span>Add Event</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setSelectedDayDetails(null)}
+                className="px-4 py-2 text-xs font-bold text-neutral-600 hover:bg-neutral-100 rounded-lg cursor-pointer transition-colors"
+              >
+                Close
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* ── Event Create / Edit Modal Popover (Expanded Window Size) ── */}
       {isEventModalOpen && (

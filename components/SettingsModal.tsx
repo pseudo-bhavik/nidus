@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { X, BookOpen, User, Keyboard, CheckCircle, Database, HelpCircle, Palette } from 'lucide-react';
+import { X, BookOpen, User, Keyboard, CheckCircle, Database, HelpCircle, Palette, Bell, Send, Mail, RefreshCw } from 'lucide-react';
 
 interface SettingsModalProps {
   isOpen: boolean;
@@ -21,7 +21,7 @@ interface SettingsModalProps {
   onSelectZoom: (zoom: number) => void;
 }
 
-type TabType = 'guide' | 'account' | 'shortcuts' | 'personalization';
+type TabType = 'guide' | 'account' | 'shortcuts' | 'personalization' | 'notifications';
 
 export default function SettingsModal({
   isOpen,
@@ -44,6 +44,60 @@ export default function SettingsModal({
 }: SettingsModalProps) {
   const [activeTab, setActiveTab] = useState<TabType>('guide');
 
+  // Telegram & Alert Notification Settings
+  const [telegramChatId, setTelegramChatId] = useState('');
+  const [alertEmail, setAlertEmail] = useState('');
+  const [isSavedNotify, setIsSavedNotify] = useState(false);
+  const [testStatus, setTestStatus] = useState<'idle' | 'sending' | 'sent' | 'error'>('idle');
+  const [testMsg, setTestMsg] = useState('');
+
+  useEffect(() => {
+    if (isOpen) {
+      const savedTg = localStorage.getItem('nidus_telegram_chat_id') || '';
+      const savedEmail = localStorage.getItem('nidus_default_alert_email') || userEmail || '';
+      setTelegramChatId(savedTg);
+      setAlertEmail(savedEmail);
+    }
+  }, [isOpen, userEmail]);
+
+  const handleSaveNotificationSettings = () => {
+    localStorage.setItem('nidus_telegram_chat_id', telegramChatId.trim());
+    localStorage.setItem('nidus_default_alert_email', alertEmail.trim());
+    setIsSavedNotify(true);
+    setTimeout(() => setIsSavedNotify(false), 2500);
+  };
+
+  const handleSendTestAlert = async () => {
+    setTestStatus('sending');
+    setTestMsg('');
+    try {
+      const res = await fetch('/api/calendar/notify', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          eventTitle: 'Nidus Notifications Test Alert',
+          startTime: new Date().toISOString(),
+          description: 'Your Telegram & Email alerts are properly configured with Nidus Workspace.',
+          channel: telegramChatId && alertEmail ? 'all' : telegramChatId ? 'telegram' : 'email',
+          telegramChatId: telegramChatId.trim(),
+          email: alertEmail.trim(),
+          reminderLabel: 'Settings Verification',
+        }),
+      });
+      const data = await res.json();
+      if (data.success || data.results?.telegram?.ok || data.results?.email?.id) {
+        setTestStatus('sent');
+        setTestMsg('Verification alert dispatched successfully!');
+      } else {
+        setTestStatus('error');
+        setTestMsg(data.errors?.join(', ') || data.error || 'Failed to dispatch test notification.');
+      }
+    } catch (err: any) {
+      setTestStatus('error');
+      setTestMsg(err.message || 'Failed to contact notification server.');
+    }
+  };
+
   // Route active tab if defaultTab prop changes on modal open
   useEffect(() => {
     if (isOpen && defaultTab) {
@@ -53,6 +107,8 @@ export default function SettingsModal({
         setActiveTab('guide');
       } else if (defaultTab === 'account') {
         setActiveTab('account');
+      } else if (defaultTab === 'notifications') {
+        setActiveTab('notifications');
       }
     }
   }, [isOpen, defaultTab]);
@@ -128,6 +184,18 @@ export default function SettingsModal({
             >
               <Palette className="w-3.5 h-3.5" />
               <span>Personalization</span>
+            </button>
+
+            <button
+              onClick={() => setActiveTab('notifications')}
+              className={`w-full px-3 py-2 rounded-md flex items-center gap-2 font-bold text-left cursor-pointer transition-all-custom ${
+                activeTab === 'notifications'
+                  ? 'bg-neutral-900/5 text-neutral-800'
+                  : 'text-neutral-500 hover:bg-neutral-900/3 hover:text-neutral-700'
+              }`}
+            >
+              <Bell className="w-3.5 h-3.5" />
+              <span>Notifications & Alerts</span>
             </button>
           </div>
 
@@ -523,6 +591,96 @@ export default function SettingsModal({
                       );
                     })}
                   </div>
+                </div>
+              </div>
+            )}
+
+            {/* 5. Notifications & Telegram Tab */}
+            {activeTab === 'notifications' && (
+              <div className="flex flex-col gap-4">
+                <div>
+                  <h3 className="font-bold text-neutral-800 text-sm mb-1 flex items-center gap-1.5">
+                    <Bell className="w-4 h-4 text-hn-orange" style={{ color: 'var(--accent-color)' }} />
+                    <span>Notification & Telegram Bot Settings</span>
+                  </h3>
+                  <p className="text-neutral-500 text-[11px]">
+                    Configure your default Telegram Chat ID and email address so that all Calendar events and reminders auto-fill and dispatch automatically.
+                  </p>
+                </div>
+
+                <div className="p-4 bg-neutral-50 rounded-xl border border-neutral-200 flex flex-col gap-3.5">
+                  {/* Telegram Chat ID */}
+                  <div>
+                    <label className="font-bold text-neutral-800 flex items-center gap-1.5 mb-1">
+                      <Send className="w-3.5 h-3.5 text-sky-500" /> Default Telegram Chat ID
+                    </label>
+                    <input
+                      type="text"
+                      value={telegramChatId}
+                      onChange={(e) => setTelegramChatId(e.target.value)}
+                      placeholder="e.g. 123456789"
+                      className="w-full bg-white border border-neutral-300 rounded-lg px-3 py-2 text-xs font-mono font-bold text-neutral-800 outline-none focus:ring-2 focus:ring-indigo-500/20"
+                    />
+                    <p className="text-[10px] text-neutral-400 mt-1">
+                      How to get: Message <strong>@userinfobot</strong> on Telegram to instantly see your numeric ID, and start your bot!
+                    </p>
+                  </div>
+
+                  <hr className="border-neutral-200/60" />
+
+                  {/* Alert Email */}
+                  <div>
+                    <label className="font-bold text-neutral-800 flex items-center gap-1.5 mb-1">
+                      <Mail className="w-3.5 h-3.5 text-neutral-500" /> Default Alert Email
+                    </label>
+                    <input
+                      type="email"
+                      value={alertEmail}
+                      onChange={(e) => setAlertEmail(e.target.value)}
+                      placeholder="your-email@example.com"
+                      className="w-full bg-white border border-neutral-300 rounded-lg px-3 py-2 text-xs font-medium text-neutral-800 outline-none focus:ring-2 focus:ring-indigo-500/20"
+                    />
+                    <p className="text-[10px] text-neutral-400 mt-1">
+                      Calendar reminders and workspace notifications will be sent to this email address.
+                    </p>
+                  </div>
+
+                  <div className="flex items-center justify-between pt-1">
+                    <button
+                      type="button"
+                      onClick={handleSaveNotificationSettings}
+                      className="px-4 py-2 bg-neutral-900 hover:bg-neutral-800 text-white font-extrabold rounded-lg text-xs cursor-pointer shadow-xs transition-all flex items-center gap-1.5"
+                    >
+                      <CheckCircle className="w-3.5 h-3.5 text-emerald-400" />
+                      <span>{isSavedNotify ? 'Saved!' : 'Save Notification Defaults'}</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={handleSendTestAlert}
+                      disabled={testStatus === 'sending' || (!telegramChatId && !alertEmail)}
+                      className="px-3 py-2 bg-white border border-neutral-300 hover:bg-neutral-100 text-neutral-700 font-bold rounded-lg text-xs cursor-pointer transition-colors flex items-center gap-1.5 disabled:opacity-40"
+                    >
+                      {testStatus === 'sending' ? (
+                        <RefreshCw className="w-3.5 h-3.5 animate-spin text-neutral-500" />
+                      ) : (
+                        <Send className="w-3.5 h-3.5 text-sky-500" />
+                      )}
+                      <span>{testStatus === 'sending' ? 'Sending Test...' : 'Test Notifications'}</span>
+                    </button>
+                  </div>
+
+                  {testMsg && (
+                    <div
+                      className={`p-2.5 rounded-lg text-xs font-bold ${
+                        testStatus === 'sent'
+                          ? 'bg-emerald-50 text-emerald-800 border border-emerald-200'
+                          : 'bg-red-50 text-red-800 border border-red-200'
+                      }`}
+                    >
+                      {testMsg}
+                    </div>
+                  )}
                 </div>
               </div>
             )}
