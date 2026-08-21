@@ -14,7 +14,7 @@ export interface Bookmark {
   read_time_minutes: number;
 }
 
-export type ViewType = 'all' | 'unsorted' | 'trash' | 'sticky-notes' | 'canvas' | 'vault' | string; // string represents specific category names
+export type ViewType = 'all' | 'unsorted' | 'trash' | 'sticky-notes' | 'canvas' | 'vault' | 'calendar' | string; // string represents specific category names
 
 export interface StickyNote {
   id: string;
@@ -57,6 +57,26 @@ export interface VaultSection {
   subsections?: VaultSection[];
   is_collapsed: boolean;
   position: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export type CalendarViewMode = 'month' | 'week' | 'day' | 'agenda' | 'year';
+
+export interface CalendarEvent {
+  id: string;
+  user_id?: string | null;
+  title: string;
+  description?: string | null;
+  location_url?: string | null;
+  start_time: string; // ISO timestamp
+  end_time: string;   // ISO timestamp
+  is_all_day: boolean;
+  color: string; // 'emerald' | 'blue' | 'purple' | 'amber' | 'rose' | 'cyan' | 'orange' | 'neutral'
+  category?: string;
+  is_completed?: boolean; // For checkable tasks
+  is_task?: boolean;      // Distinguishes tasks from events
+  recurrence_rule?: string | null; // 'daily' | 'weekly' | 'monthly' | 'yearly' | null
   created_at: string;
   updated_at: string;
 }

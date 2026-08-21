@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Search, Terminal, ArrowRight, CornerDownLeft, Inbox, Trash2, Library, CheckSquare, Plus, FileSpreadsheet, StickyNote, PenTool, Archive, Upload } from 'lucide-react';
+import { Search, Terminal, ArrowRight, CornerDownLeft, Inbox, Trash2, Library, CheckSquare, Plus, FileSpreadsheet, StickyNote, PenTool, Archive, Upload, Calendar } from 'lucide-react';
 import { Bookmark } from '../lib/types';
 
 interface CommandPaletteProps {
@@ -111,6 +111,13 @@ export default function CommandPalette({
       subtitle: 'Import browser HTML/JSON bookmarks preserving nested folders',
       icon: <Upload className="w-4 h-4 text-purple-500" />,
       action: () => { onNavigateView('vault'); onClose(); },
+    },
+    {
+      id: 'go-calendar',
+      title: 'Open Calendar Workspace',
+      subtitle: 'Schedule events, checkable tasks, time-grid & .ics sync',
+      icon: <Calendar className="w-4 h-4 text-indigo-500" />,
+      action: () => { onNavigateView('calendar'); onClose(); },
     },
     {
       id: 'go-unsorted',

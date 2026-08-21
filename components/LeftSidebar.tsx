@@ -1,5 +1,5 @@
 import React from 'react';
-import { Bookmark, Inbox, Trash2, Folder, Database, UploadCloud, Settings, LogIn, User, ChevronLeft, Plus, Keyboard, StickyNote, PenTool, Archive } from 'lucide-react';
+import { Bookmark, Inbox, Trash2, Folder, Database, UploadCloud, Settings, LogIn, User, ChevronLeft, Plus, Keyboard, StickyNote, PenTool, Archive, Calendar } from 'lucide-react';
 import { Bookmark as BookmarkType, ViewType } from '../lib/types';
 
 interface LeftSidebarProps {
@@ -176,6 +176,21 @@ export default function LeftSidebar({
               <span>Link Vault</span>
             </div>
             <span className="text-[9px] font-bold bg-purple-500/10 text-purple-600 px-1.5 py-0.2 rounded-full">Vault</span>
+          </button>
+
+          <button
+            onClick={() => onViewChange('calendar')}
+            className={`w-full px-3 py-1.5 rounded-md flex items-center justify-between font-bold cursor-pointer transition-all-custom ${
+              currentView === 'calendar'
+                ? 'bg-neutral-900/5 text-neutral-800'
+                : 'text-neutral-500 hover:bg-neutral-900/3 hover:text-neutral-700'
+            }`}
+          >
+            <div className="flex items-center gap-2">
+              <Calendar className="w-3.5 h-3.5 shrink-0 text-indigo-500" />
+              <span>Calendar</span>
+            </div>
+            <span className="text-[9px] font-bold bg-indigo-500/10 text-indigo-600 px-1.5 py-0.2 rounded-full">Schedule</span>
           </button>
         </div>
 

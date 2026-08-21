@@ -199,7 +199,14 @@ export default function SettingsModal({
                 </div>
 
                 <div>
-                  <h4 className="font-bold text-neutral-800 mb-1">8. Vim Hotkeys, Right-Click Menus & Command Console</h4>
+                  <h4 className="font-bold text-neutral-800 mb-1">8. Calendar Workspace (Google Calendar Clone)</h4>
+                  <p className="mb-2">
+                    Schedule events and checkable tasks with full time-blocking inside the <strong>Calendar</strong> view. Switch seamlessly between <strong>Month (<kbd className="font-mono text-[10px]">m</kbd>)</strong>, <strong>Week (<kbd className="font-mono text-[10px]">w</kbd>)</strong>, <strong>Day (<kbd className="font-mono text-[10px]">d</kbd>)</strong>, <strong>Agenda (<kbd className="font-mono text-[10px]">a</kbd>)</strong>, and <strong>Year (<kbd className="font-mono text-[10px]">y</kbd>)</strong> views. Supports <strong>.ics iCalendar file import & export</strong>, color-coded tag palettes, recurring event rules, and Supabase cloud sync.
+                  </p>
+                </div>
+
+                <div>
+                  <h4 className="font-bold text-neutral-800 mb-1">9. Vim Hotkeys, Right-Click Menus & Command Console</h4>
                   <p>
                     Navigate links instantly using Vim navigation keys (<strong>j</strong> / <strong>k</strong>). <strong>Right-click</strong> any bookmark, vault link, or folder header to open an instant action menu (Open, Copy, Re-scrape, Add Subfolder, Rename, Delete). Press <strong>Cmd+K</strong> (or <strong>Ctrl+K</strong>) to open the Command Palette to navigate views and execute actions instantly.
                   </p>
@@ -330,6 +337,14 @@ export default function SettingsModal({
                       <tr>
                         <td className="px-3 py-2 font-mono text-neutral-800"><kbd className="bg-neutral-100 border border-neutral-200 rounded px-1.5 py-0.5">Esc</kbd></td>
                         <td className="px-3 py-2">Unfocus input text, clear selection, hide inspector, or close modals</td>
+                      </tr>
+                      <tr>
+                        <td className="px-3 py-2 font-mono text-neutral-800"><kbd className="bg-neutral-100 border border-neutral-200 rounded px-1.5 py-0.5">m</kbd> / <kbd className="bg-neutral-100 border border-neutral-200 rounded px-1.5 py-0.5">w</kbd> / <kbd className="bg-neutral-100 border border-neutral-200 rounded px-1.5 py-0.5">d</kbd> / <kbd className="bg-neutral-100 border border-neutral-200 rounded px-1.5 py-0.5">a</kbd> / <kbd className="bg-neutral-100 border border-neutral-200 rounded px-1.5 py-0.5">y</kbd></td>
+                        <td className="px-3 py-2">Switch Calendar views (Month, Week, Day, Agenda, Year)</td>
+                      </tr>
+                      <tr>
+                        <td className="px-3 py-2 font-mono text-neutral-800"><kbd className="bg-neutral-100 border border-neutral-200 rounded px-1.5 py-0.5">c</kbd> / <kbd className="bg-neutral-100 border border-neutral-200 rounded px-1.5 py-0.5">t</kbd> (in Calendar)</td>
+                        <td className="px-3 py-2">Create new event (<kbd className="font-mono text-[10px]">c</kbd>) or jump to Today (<kbd className="font-mono text-[10px]">t</kbd>)</td>
                       </tr>
                       <tr>
                         <td className="px-3 py-2 font-mono text-neutral-800"><span className="text-[11px] font-semibold text-neutral-700">Right-Click (Link)</span></td>

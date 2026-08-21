@@ -9,6 +9,7 @@ import InspectorPanel from '../components/InspectorPanel';
 import StickyNotesView from '../components/StickyNotesView';
 import WhiteboardCanvas from '../components/WhiteboardCanvas';
 import LinkVault from '../components/LinkVault';
+import CalendarView from '../components/CalendarView';
 import CommandPalette from '../components/CommandPalette';
 import ImportExportModal from '../components/ImportExportModal';
 import AuthModal from '../components/AuthModal';
@@ -76,6 +77,7 @@ export default function Dashboard({ initialView }: { initialView?: ViewType } = 
     if (view === 'sticky-notes') targetPath = '/stickynotes';
     else if (view === 'canvas') targetPath = '/whiteboard';
     else if (view === 'vault') targetPath = '/vault';
+    else if (view === 'calendar') targetPath = '/calendar';
 
     const search = window.location.search;
     if (window.location.pathname.toLowerCase() !== targetPath) {
@@ -93,6 +95,8 @@ export default function Dashboard({ initialView }: { initialView?: ViewType } = 
       setCurrentView('canvas');
     } else if (path.startsWith('/vault')) {
       setCurrentView('vault');
+    } else if (path.startsWith('/calendar')) {
+      setCurrentView('calendar');
     } else if (initialView) {
       setCurrentView(initialView);
     }
@@ -1218,6 +1222,11 @@ export default function Dashboard({ initialView }: { initialView?: ViewType } = 
             isSidebarOpen={isSidebarOpen}
             onOpenSidebar={() => setIsSidebarOpen(true)}
           />
+        ) : currentView === 'calendar' ? (
+          <CalendarView
+            isSidebarOpen={isSidebarOpen}
+            onOpenSidebar={() => setIsSidebarOpen(true)}
+          />
         ) : (
           <CentralMonitor
             bookmarks={bookmarks}
@@ -1254,7 +1263,7 @@ export default function Dashboard({ initialView }: { initialView?: ViewType } = 
       </div>
 
       {/* Right Inspector Slider */}
-      {currentView !== 'sticky-notes' && currentView !== 'canvas' && currentView !== 'vault' && (
+      {currentView !== 'sticky-notes' && currentView !== 'canvas' && currentView !== 'vault' && currentView !== 'calendar' && (
         <InspectorPanel
           bookmark={activeBookmark}
           onClose={() => setActiveBookmark(null)}
