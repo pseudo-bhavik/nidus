@@ -270,7 +270,7 @@ export default function LinkVault({ isSidebarOpen, onOpenSidebar }: LinkVaultPro
     }, 400);
   }, [syncSectionsToCloud]);
 
-  // Global listener to close context menu on click or escape
+  // Global listener to close context menu, cancel modals, deselect, or clear search on escape
   useEffect(() => {
     const handleGlobalClick = () => {
       if (contextMenu) setContextMenu(null);
@@ -278,8 +278,29 @@ export default function LinkVault({ isSidebarOpen, onOpenSidebar }: LinkVaultPro
     };
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
-        setContextMenu(null);
-        setSectionMenu(null);
+        if (contextMenu) { setContextMenu(null); return; }
+        if (sectionMenu) { setSectionMenu(null); return; }
+        if (isImportModalOpen) { setIsImportModalOpen(false); return; }
+        if (sectionToDelete) { setSectionToDelete(null); return; }
+        if (isConfirmingWipeAll) { setIsConfirmingWipeAll(false); return; }
+        if (bulkPasteSection) { setBulkPasteSection(null); return; }
+        if (addingLinkToSection) { setAddingLinkToSection(null); setNewLinkUrl(''); return; }
+        if (creatingSubfolderTargetId) { setCreatingSubfolderTargetId(null); setNewSubfolderTitle(''); return; }
+        if (isCreatingSection) { setIsCreatingSection(false); setNewSectionTitle(''); return; }
+        if (renamingSectionId) { setRenamingSectionId(null); setRenameValue(''); return; }
+        if (selectedLinkIds.size > 0 || selectedSectionIds.size > 0) {
+          setSelectedLinkIds(new Set());
+          setSelectedSectionIds(new Set());
+          return;
+        }
+        if (searchQuery) {
+          setSearchQuery('');
+          return;
+        }
+        if (document.activeElement instanceof HTMLElement && (document.activeElement.tagName === 'INPUT' || document.activeElement.tagName === 'TEXTAREA')) {
+          document.activeElement.blur();
+          return;
+        }
       }
     };
     window.addEventListener('click', handleGlobalClick);
@@ -288,7 +309,11 @@ export default function LinkVault({ isSidebarOpen, onOpenSidebar }: LinkVaultPro
       window.removeEventListener('click', handleGlobalClick);
       window.removeEventListener('keydown', handleKeyDown);
     };
-  }, [contextMenu, sectionMenu]);
+  }, [
+    contextMenu, sectionMenu, isImportModalOpen, sectionToDelete, isConfirmingWipeAll,
+    bulkPasteSection, addingLinkToSection, creatingSubfolderTargetId, isCreatingSection,
+    renamingSectionId, selectedLinkIds, selectedSectionIds, searchQuery
+  ]);
 
   // ── Scraper Helper (POST /api/scrape) ─────────────────────────
 
@@ -653,6 +678,43 @@ export default function LinkVault({ isSidebarOpen, onOpenSidebar }: LinkVaultPro
   ): VaultSection[] => {
     const sectionsResult: VaultSection[] = [];
 
+    // Helper to process a native VaultSection (from Nidus export)
+    const processVaultSection = (sec: any, pos: number): VaultSection => {
+      const sectionId = sec.id || generateId('vsec');
+      const color = sec.color || SECTION_COLORS[(depth + pos) % SECTION_COLORS.length].id;
+      const links: VaultLink[] = (Array.isArray(sec.links) ? sec.links : []).map((l: any) => {
+        const linkId = l.id || generateId('vlink');
+        if (l.url) allNewLinks.push({ sectionId, linkId, url: l.url });
+        return {
+          id: linkId,
+          url: l.url || '',
+          title: l.title || getDomain(l.url || ''),
+          description: l.description || null,
+          domain: l.domain || getDomain(l.url || ''),
+          favicon_url: l.favicon_url || getFaviconUrl(l.url || ''),
+          read_time_minutes: typeof l.read_time_minutes === 'number' ? l.read_time_minutes : 1,
+          created_at: l.created_at || new Date().toISOString(),
+        };
+      }).filter((l: VaultLink) => l.url.startsWith('http://') || l.url.startsWith('https://'));
+
+      const subsections: VaultSection[] = (Array.isArray(sec.subsections) ? sec.subsections : []).map((sub: any, sIdx: number) =>
+        processVaultSection(sub, sIdx)
+      );
+
+      return {
+        id: sectionId,
+        title: sec.title || 'Collection',
+        color,
+        links,
+        subsections,
+        is_collapsed: Boolean(sec.is_collapsed),
+        position: typeof sec.position === 'number' ? sec.position : pos,
+        created_at: sec.created_at || new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      };
+    };
+
+    // Helper for generic browser/folder JSON trees
     const processFolder = (name: string, children: any[]): VaultSection => {
       const sectionId = generateId('vsec');
       const color = SECTION_COLORS[(depth + sectionsResult.length) % SECTION_COLORS.length].id;
@@ -667,14 +729,14 @@ export default function LinkVault({ isSidebarOpen, onOpenSidebar }: LinkVaultPro
             id: linkId,
             url: child.url,
             title: child.name || child.title || getDomain(child.url),
-            description: null,
+            description: child.description || null,
             domain: getDomain(child.url),
-            favicon_url: getFaviconUrl(child.url),
+            favicon_url: child.favicon_url || getFaviconUrl(child.url),
             read_time_minutes: 1,
             created_at: new Date().toISOString(),
           });
-        } else if (child.children || child.type === 'folder') {
-          const sub = processFolder(child.name || child.title || 'Subfolder', child.children || []);
+        } else if (child.children || child.type === 'folder' || child.subsections) {
+          const sub = processFolder(child.name || child.title || 'Subfolder', child.children || child.subsections || []);
           subSections.push(sub);
         }
       });
@@ -693,10 +755,17 @@ export default function LinkVault({ isSidebarOpen, onOpenSidebar }: LinkVaultPro
     };
 
     if (Array.isArray(data)) {
-      data.forEach((item) => {
-        if (item.children) {
+      data.forEach((item, idx) => {
+        // 1. Nidus native VaultSection export (has title and (links or subsections))
+        if (item && (Array.isArray(item.links) || Array.isArray(item.subsections)) && item.title) {
+          sectionsResult.push(processVaultSection(item, idx));
+        }
+        // 2. Generic folder with children
+        else if (item && item.children) {
           sectionsResult.push(processFolder(item.name || item.title || 'Bookmarks', item.children));
-        } else if (item.url) {
+        }
+        // 3. Flat bookmark list item
+        else if (item && item.url) {
           const linkId = generateId('vlink');
           const secId = generateId('vsec');
           allNewLinks.push({ sectionId: secId, linkId, url: item.url });
@@ -708,7 +777,7 @@ export default function LinkVault({ isSidebarOpen, onOpenSidebar }: LinkVaultPro
               id: linkId,
               url: item.url,
               title: item.title || item.name || getDomain(item.url),
-              description: null,
+              description: item.description || null,
               domain: getDomain(item.url),
               favicon_url: getFaviconUrl(item.url),
               read_time_minutes: 1,
@@ -722,24 +791,29 @@ export default function LinkVault({ isSidebarOpen, onOpenSidebar }: LinkVaultPro
           });
         }
       });
-    } else if (data.roots) {
-      Object.keys(data.roots).forEach((key) => {
-        const root = data.roots[key];
-        if (root && root.children) {
-          // If root is bookmarks_bar, promote its direct children folders to top-level sections
-          if (key === 'bookmark_bar' || key === 'other') {
-            root.children.forEach((child: any) => {
-              if (child.children) {
-                sectionsResult.push(processFolder(child.name || 'Folder', child.children));
-              }
-            });
-          } else {
-            sectionsResult.push(processFolder(root.name || key, root.children));
+    } else if (data && typeof data === 'object') {
+      if (Array.isArray(data.sections)) {
+        data.sections.forEach((sec: any, idx: number) => {
+          sectionsResult.push(processVaultSection(sec, idx));
+        });
+      } else if (data.roots) {
+        Object.keys(data.roots).forEach((key) => {
+          const root = data.roots[key];
+          if (root && root.children) {
+            if (key === 'bookmark_bar' || key === 'other') {
+              root.children.forEach((child: any) => {
+                if (child.children) {
+                  sectionsResult.push(processFolder(child.name || 'Folder', child.children));
+                }
+              });
+            } else {
+              sectionsResult.push(processFolder(root.name || key, root.children));
+            }
           }
-        }
-      });
-    } else if (data.children) {
-      sectionsResult.push(processFolder(data.name || 'Bookmarks', data.children));
+        });
+      } else if (data.children) {
+        sectionsResult.push(processFolder(data.name || 'Bookmarks', data.children));
+      }
     }
 
     return sectionsResult;

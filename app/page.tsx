@@ -1052,19 +1052,43 @@ export default function Dashboard({ initialView }: { initialView?: ViewType } = 
         return;
       }
 
-      // Escape key handles universal close actions (settings, palettes, search, etc.)
+      // Escape key handles universal close and cancel-back actions across the whole site
       if (e.key === 'Escape') {
+        const hadOpenModal = isSettingsOpen || isImportExportOpen || isAuthOpen || isEditModalOpen || isCommandPaletteOpen || contextMenu.visible;
         setIsSettingsOpen(false);
         setIsImportExportOpen(false);
         setIsAuthOpen(false);
         setIsEditModalOpen(false);
         setIsCommandPaletteOpen(false);
-        setActiveBookmark(null);
-        setSearchQuery('');
-        setSelectedIds([]);
         setContextMenu((prev) => ({ ...prev, visible: false }));
-        if (document.activeElement instanceof HTMLElement) {
+
+        if (hadOpenModal) return;
+
+        if (document.activeElement instanceof HTMLElement && (document.activeElement.tagName === 'INPUT' || document.activeElement.tagName === 'TEXTAREA')) {
           document.activeElement.blur();
+          return;
+        }
+
+        if (searchQuery) {
+          setSearchQuery('');
+          return;
+        }
+
+        if (selectedIds.length > 0) {
+          setSelectedIds([]);
+          return;
+        }
+
+        if (activeBookmark) {
+          setActiveBookmark(null);
+          return;
+        }
+
+        // Return back to main 'all' view when in subview
+        if (currentView !== 'all') {
+          setCurrentView('all');
+          try { window.history.pushState(null, '', '/'); } catch (err) {}
+          return;
         }
         return;
       }
