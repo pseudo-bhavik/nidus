@@ -369,8 +369,12 @@ export default function CalendarView({ isSidebarOpen, onOpenSidebar }: CalendarV
                 : 'Scheduled Alert';
 
             const defaultTg = evt.reminder_telegram_chat_id || localStorage.getItem('nidus_telegram_chat_id') || '';
-            const defaultEmail = evt.reminder_email || localStorage.getItem('nidus_default_alert_email') || '';
+            const defaultEmail = evt.reminder_email || localStorage.getItem('nidus_default_alert_email') || localStorage.getItem('nidus_smtp_user') || '';
             const resendApiKey = localStorage.getItem('nidus_resend_api_key') || '';
+            const smtpUser = localStorage.getItem('nidus_smtp_user') || '';
+            const smtpPass = localStorage.getItem('nidus_smtp_pass') || '';
+            const smtpHost = localStorage.getItem('nidus_smtp_host') || '';
+            const smtpPort = localStorage.getItem('nidus_smtp_port') || '465';
 
             // Dispatch to Notification API
             try {
@@ -385,6 +389,10 @@ export default function CalendarView({ isSidebarOpen, onOpenSidebar }: CalendarV
                   telegramChatId: defaultTg,
                   email: defaultEmail,
                   resendApiKey,
+                  smtpUser,
+                  smtpPass,
+                  smtpHost,
+                  smtpPort,
                   reminderLabel,
                 }),
               }).catch(() => {});
@@ -549,6 +557,11 @@ export default function CalendarView({ isSidebarOpen, onOpenSidebar }: CalendarV
     setTestNotifyStatus('sending');
     setTestNotifyMsg('');
     const resendApiKey = localStorage.getItem('nidus_resend_api_key') || '';
+    const smtpUser = localStorage.getItem('nidus_smtp_user') || '';
+    const smtpPass = localStorage.getItem('nidus_smtp_pass') || '';
+    const smtpHost = localStorage.getItem('nidus_smtp_host') || '';
+    const smtpPort = localStorage.getItem('nidus_smtp_port') || '465';
+
     try {
       const res = await fetch('/api/calendar/notify', {
         method: 'POST',
@@ -559,15 +572,25 @@ export default function CalendarView({ isSidebarOpen, onOpenSidebar }: CalendarV
           description: formDescription.trim() || 'This is a test notification from Nidus Calendar.',
           channel: formReminderChannelEmail && formReminderChannelTelegram ? 'all' : formReminderChannelTelegram ? 'telegram' : 'email',
           telegramChatId: formReminderTelegramChatId.trim(),
-          email: formReminderEmail.trim(),
+          email: formReminderEmail.trim() || smtpUser.trim(),
           resendApiKey: resendApiKey.trim(),
+          smtpUser: smtpUser.trim(),
+          smtpPass: smtpPass.trim(),
+          smtpHost: smtpHost.trim(),
+          smtpPort: smtpPort.trim(),
           reminderLabel: formReminderType === '3h' ? '3 hours before' : formReminderType === '1h' ? '1 hour before' : formReminderType === '30m' ? '30 minutes before' : formReminderType === 'custom' ? `At custom time: ${formReminderCustomDate} ${formReminderCustomTime}` : 'Event scheduled reminder',
         }),
       });
       const data = await res.json();
       if (data.success || data.results?.telegram?.ok || (data.results?.email && !data.results?.email?.error)) {
         setTestNotifyStatus('sent');
-        setTestNotifyMsg('Test reminder dispatched successfully!');
+        setTestNotifyMsg(
+          data.results?.email?.provider === 'smtp'
+            ? 'Test alert dispatched via your Personal Email SMTP!'
+            : data.results?.email?.provider === 'supabase_auth'
+            ? 'Test alert dispatched via Supabase Mailer!'
+            : 'Test reminder dispatched successfully!'
+        );
       } else {
         setTestNotifyStatus('error');
         setTestNotifyMsg(data.errors?.join(' | ') || data.error || 'Failed to dispatch test reminder.');

@@ -48,6 +48,10 @@ export default function SettingsModal({
   const [telegramChatId, setTelegramChatId] = useState('');
   const [alertEmail, setAlertEmail] = useState('');
   const [resendApiKey, setResendApiKey] = useState('');
+  const [smtpUser, setSmtpUser] = useState('');
+  const [smtpPass, setSmtpPass] = useState('');
+  const [smtpHost, setSmtpHost] = useState('');
+  const [smtpPort, setSmtpPort] = useState('465');
   const [isSavedNotify, setIsSavedNotify] = useState(false);
   const [testStatus, setTestStatus] = useState<'idle' | 'sending' | 'sent' | 'error'>('idle');
   const [testMsg, setTestMsg] = useState('');
@@ -57,9 +61,18 @@ export default function SettingsModal({
       const savedTg = localStorage.getItem('nidus_telegram_chat_id') || '';
       const savedEmail = localStorage.getItem('nidus_default_alert_email') || userEmail || '';
       const savedResendKey = localStorage.getItem('nidus_resend_api_key') || '';
+      const savedSmtpUser = localStorage.getItem('nidus_smtp_user') || userEmail || '';
+      const savedSmtpPass = localStorage.getItem('nidus_smtp_pass') || '';
+      const savedSmtpHost = localStorage.getItem('nidus_smtp_host') || 'smtp.gmail.com';
+      const savedSmtpPort = localStorage.getItem('nidus_smtp_port') || '465';
+
       setTelegramChatId(savedTg);
       setAlertEmail(savedEmail);
       setResendApiKey(savedResendKey);
+      setSmtpUser(savedSmtpUser);
+      setSmtpPass(savedSmtpPass);
+      setSmtpHost(savedSmtpHost);
+      setSmtpPort(savedSmtpPort);
     }
   }, [isOpen, userEmail]);
 
@@ -67,6 +80,10 @@ export default function SettingsModal({
     localStorage.setItem('nidus_telegram_chat_id', telegramChatId.trim());
     localStorage.setItem('nidus_default_alert_email', alertEmail.trim());
     localStorage.setItem('nidus_resend_api_key', resendApiKey.trim());
+    localStorage.setItem('nidus_smtp_user', smtpUser.trim());
+    localStorage.setItem('nidus_smtp_pass', smtpPass.trim());
+    localStorage.setItem('nidus_smtp_host', smtpHost.trim());
+    localStorage.setItem('nidus_smtp_port', smtpPort.trim());
     setIsSavedNotify(true);
     setTimeout(() => setIsSavedNotify(false), 2500);
   };
@@ -84,15 +101,25 @@ export default function SettingsModal({
           description: 'Your Telegram & Email alerts are properly configured with Nidus Workspace.',
           channel: telegramChatId && alertEmail ? 'all' : telegramChatId ? 'telegram' : 'email',
           telegramChatId: telegramChatId.trim(),
-          email: alertEmail.trim(),
+          email: alertEmail.trim() || smtpUser.trim(),
           resendApiKey: resendApiKey.trim(),
+          smtpUser: smtpUser.trim(),
+          smtpPass: smtpPass.trim(),
+          smtpHost: smtpHost.trim(),
+          smtpPort: smtpPort.trim(),
           reminderLabel: 'Settings Verification',
         }),
       });
       const data = await res.json();
       if (data.success || data.results?.telegram?.ok || (data.results?.email && !data.results?.email?.error)) {
         setTestStatus('sent');
-        setTestMsg('Verification alert dispatched successfully!');
+        setTestMsg(
+          data.results?.email?.provider === 'smtp'
+            ? 'Test alert dispatched via your Personal Email SMTP!'
+            : data.results?.email?.provider === 'supabase_auth'
+            ? 'Test alert dispatched via Supabase Mailer!'
+            : 'Verification alert dispatched successfully!'
+        );
       } else {
         setTestStatus('error');
         setTestMsg(data.errors?.join(' | ') || data.error || 'Failed to dispatch test notification.');
@@ -652,11 +679,49 @@ export default function SettingsModal({
 
                   <hr className="border-neutral-200/60" />
 
+                  {/* Personal Email SMTP (Same as Supabase Mailer) */}
+                  <div className="flex flex-col gap-2">
+                    <label className="font-bold text-neutral-800 flex items-center justify-between">
+                      <span className="flex items-center gap-1.5">
+                        <Mail className="w-3.5 h-3.5 text-emerald-600" /> Personal Email SMTP (Gmail / Custom)
+                      </span>
+                      <span className="text-[10px] text-neutral-500 font-bold">Same mail configured in Supabase</span>
+                    </label>
+
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                      <div>
+                        <label className="text-[10px] font-bold text-neutral-500 mb-0.5 block">SMTP User / Email</label>
+                        <input
+                          type="text"
+                          value={smtpUser}
+                          onChange={(e) => setSmtpUser(e.target.value)}
+                          placeholder="e.g. yourname@gmail.com"
+                          className="w-full bg-white border border-neutral-300 rounded-lg px-2.5 py-1.5 text-xs text-neutral-800 outline-none focus:ring-2 focus:ring-indigo-500/20"
+                        />
+                      </div>
+                      <div>
+                        <label className="text-[10px] font-bold text-neutral-500 mb-0.5 block">App Password / Password</label>
+                        <input
+                          type="password"
+                          value={smtpPass}
+                          onChange={(e) => setSmtpPass(e.target.value)}
+                          placeholder="16-character App Password"
+                          className="w-full bg-white border border-neutral-300 rounded-lg px-2.5 py-1.5 text-xs font-mono text-neutral-800 outline-none focus:ring-2 focus:ring-indigo-500/20"
+                        />
+                      </div>
+                    </div>
+                    <p className="text-[10px] text-neutral-400">
+                      If using Gmail: Generate a 16-character <strong>Google App Password</strong> under your Google Account Security $\rightarrow$ 2-Step Verification $\rightarrow$ App Passwords.
+                    </p>
+                  </div>
+
+                  <hr className="border-neutral-200/60" />
+
                   {/* Resend Email API Key (Optional) */}
                   <div>
                     <label className="font-bold text-neutral-800 flex items-center justify-between mb-1">
                       <span className="flex items-center gap-1.5">
-                        <Mail className="w-3.5 h-3.5 text-orange-500" /> Resend API Key (for Live Email Delivery)
+                        <Mail className="w-3.5 h-3.5 text-orange-500" /> Resend API Key (Optional Alternative)
                       </span>
                       <a
                         href="https://resend.com/api-keys"
@@ -674,9 +739,6 @@ export default function SettingsModal({
                       placeholder="re_123456789_..."
                       className="w-full bg-white border border-neutral-300 rounded-lg px-3 py-2 text-xs font-mono text-neutral-800 outline-none focus:ring-2 focus:ring-indigo-500/20"
                     />
-                    <p className="text-[10px] text-neutral-400 mt-1">
-                      Add your free Resend key here (or as <code>RESEND_API_KEY</code> in <code>.env</code>) to receive direct email alerts.
-                    </p>
                   </div>
 
                   <div className="flex items-center justify-between pt-1">
