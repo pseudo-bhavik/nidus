@@ -5,8 +5,8 @@ import {
   Archive, Plus, Search, X, ChevronDown, ChevronRight,
   ExternalLink, Copy, Check, Trash2, Edit2, GripVertical,
   Link as LinkIcon, ClipboardPaste, MoreHorizontal, RefreshCw, Clock, Globe,
-  Upload, Download, FileText, CheckCircle, AlertTriangle, Folder, FolderOpen, FolderPlus,
-  CheckSquare, Square, Edit3, Trash
+  Upload, Download, FileText, CheckCircle, CheckCircle2, AlertTriangle, Folder, FolderOpen, FolderPlus,
+  CheckSquare, Square, Edit3, Trash, Cloud, CloudUpload, Database
 } from 'lucide-react';
 import { VaultSection, VaultLink } from '../lib/types';
 import { supabase } from '../lib/supabase';
@@ -154,19 +154,56 @@ export default function LinkVault({ isSidebarOpen, onOpenSidebar }: LinkVaultPro
   const [draggedSectionIdx, setDraggedSectionIdx] = useState<number | null>(null);
   const [dragOverSectionIdx, setDragOverSectionIdx] = useState<number | null>(null);
 
-  // Supabase cloud save timer
+  // Supabase cloud save timer & status
   const saveTimerRef = useRef<NodeJS.Timeout | null>(null);
+  const [cloudSyncStatus, setCloudSyncStatus] = useState<'idle' | 'syncing' | 'synced' | 'error'>('idle');
 
-  // Load from Supabase (with localStorage fallback)
+  // Direct sync function to push sections to Supabase
+  const syncSectionsToCloud = useCallback(async (sectionsToSync: VaultSection[]) => {
+    if (!sectionsToSync || sectionsToSync.length === 0) return;
+    setCloudSyncStatus('syncing');
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      const uid = session?.user?.id || null;
+
+      const upsertPayload = sectionsToSync.map((sec, idx) => ({
+        id: sec.id,
+        user_id: uid,
+        title: sec.title,
+        color: sec.color || 'emerald',
+        links: Array.isArray(sec.links) ? sec.links : [],
+        subsections: Array.isArray(sec.subsections) ? sec.subsections : [],
+        is_collapsed: sec.is_collapsed ?? false,
+        position: typeof sec.position === 'number' ? sec.position : idx,
+        created_at: sec.created_at || new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      }));
+
+      const { error } = await supabase.from('vault_sections').upsert(upsertPayload);
+      if (error) {
+        console.warn('Supabase vault upsert warning/error:', error);
+        setCloudSyncStatus('error');
+      } else {
+        setCloudSyncStatus('synced');
+      }
+    } catch (err) {
+      console.warn('Failed to sync vault to cloud:', err);
+      setCloudSyncStatus('error');
+    }
+  }, []);
+
+  // Load from Supabase (with automatic migration from localStorage if table is empty)
   useEffect(() => {
     let isMounted = true;
 
     const loadVaultData = async () => {
+      let loadedFromDb = false;
+
       try {
-        const { data: { user } } = await supabase.auth.getUser();
+        const { data: { session } } = await supabase.auth.getSession();
         let query = supabase.from('vault_sections').select('*');
-        if (user) {
-          query = query.eq('user_id', user.id);
+        if (session?.user) {
+          query = query.eq('user_id', session.user.id);
         }
         const { data: dbSections, error } = await query.order('position', { ascending: true });
 
@@ -184,6 +221,8 @@ export default function LinkVault({ isSidebarOpen, onOpenSidebar }: LinkVaultPro
           }));
 
           setSections(mappedSections);
+          setCloudSyncStatus('synced');
+          loadedFromDb = true;
           try {
             localStorage.setItem(STORAGE_KEY, JSON.stringify(mappedSections));
           } catch (e) {}
@@ -192,13 +231,19 @@ export default function LinkVault({ isSidebarOpen, onOpenSidebar }: LinkVaultPro
         }
       } catch (e) {}
 
-      // Fallback to localStorage
+      // Fallback to localStorage & auto-sync to newly created database table!
       try {
         const saved = localStorage.getItem(STORAGE_KEY);
         if (saved) {
           const parsed = JSON.parse(saved);
-          if (Array.isArray(parsed) && isMounted) {
+          if (Array.isArray(parsed) && parsed.length > 0 && isMounted) {
             setSections(parsed);
+            setIsLoaded(true);
+            if (!loadedFromDb) {
+              // Auto-migrate local sections to Supabase database!
+              syncSectionsToCloud(parsed);
+            }
+            return;
           }
         }
       } catch (e) {}
@@ -208,7 +253,7 @@ export default function LinkVault({ isSidebarOpen, onOpenSidebar }: LinkVaultPro
 
     loadVaultData();
     return () => { isMounted = false; };
-  }, []);
+  }, [syncSectionsToCloud]);
 
   // Save to localStorage & sync to Supabase
   const saveSections = useCallback((updated: VaultSection[]) => {
@@ -220,25 +265,10 @@ export default function LinkVault({ isSidebarOpen, onOpenSidebar }: LinkVaultPro
 
     // Debounced cloud sync to Supabase
     if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
-    saveTimerRef.current = setTimeout(async () => {
-      try {
-        const { data: { user } } = await supabase.auth.getUser();
-        const upsertPayload = indexed.map((sec) => ({
-          id: sec.id,
-          user_id: user?.id || null,
-          title: sec.title,
-          color: sec.color,
-          links: sec.links,
-          subsections: sec.subsections || [],
-          is_collapsed: sec.is_collapsed,
-          position: sec.position,
-          created_at: sec.created_at || new Date().toISOString(),
-          updated_at: new Date().toISOString(),
-        }));
-        await supabase.from('vault_sections').upsert(upsertPayload);
-      } catch (err) {}
+    saveTimerRef.current = setTimeout(() => {
+      syncSectionsToCloud(indexed);
     }, 400);
-  }, []);
+  }, [syncSectionsToCloud]);
 
   // Global listener to close context menu on click or escape
   useEffect(() => {
@@ -1690,6 +1720,41 @@ export default function LinkVault({ isSidebarOpen, onOpenSidebar }: LinkVaultPro
               </button>
             )}
           </div>
+
+          {/* Cloud Sync Status / Manual Trigger */}
+          {sections.length > 0 && (
+            <button
+              type="button"
+              onClick={() => syncSectionsToCloud(sections)}
+              className={`px-2.5 py-1.5 rounded-lg font-bold text-xs flex items-center gap-1.5 cursor-pointer transition-all shadow-2xs shrink-0 ${
+                cloudSyncStatus === 'syncing'
+                  ? 'bg-indigo-50 border border-indigo-200 text-indigo-700'
+                  : cloudSyncStatus === 'synced'
+                  ? 'bg-emerald-50 border border-emerald-200 text-emerald-700 hover:bg-emerald-100'
+                  : cloudSyncStatus === 'error'
+                  ? 'bg-amber-50 border border-amber-200 text-amber-700 hover:bg-amber-100'
+                  : 'bg-neutral-100 hover:bg-neutral-200 text-neutral-700 border border-neutral-200'
+              }`}
+              title="Sync Link Vault with Supabase Cloud Database"
+            >
+              {cloudSyncStatus === 'syncing' ? (
+                <>
+                  <RefreshCw className="w-3.5 h-3.5 animate-spin text-indigo-600" />
+                  <span className="hidden sm:inline">Syncing...</span>
+                </>
+              ) : cloudSyncStatus === 'synced' ? (
+                <>
+                  <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
+                  <span className="hidden sm:inline">Cloud Synced</span>
+                </>
+              ) : (
+                <>
+                  <CloudUpload className="w-3.5 h-3.5 text-neutral-500" />
+                  <span className="hidden sm:inline">Sync to Cloud</span>
+                </>
+              )}
+            </button>
+          )}
 
           {/* Import Bookmarks Button */}
           <button
