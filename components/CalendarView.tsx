@@ -587,8 +587,8 @@ export default function CalendarView({ isSidebarOpen, onOpenSidebar }: CalendarV
         setTestNotifyMsg(
           data.results?.email?.provider === 'smtp'
             ? 'Test alert dispatched via your Personal Email SMTP!'
-            : data.results?.email?.provider === 'supabase_auth'
-            ? 'Test alert dispatched via Supabase Mailer!'
+            : data.results?.email?.provider === 'direct_relay'
+            ? 'Test reminder email dispatched directly to your inbox!'
             : 'Test reminder dispatched successfully!'
         );
       } else {
