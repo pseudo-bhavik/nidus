@@ -47,6 +47,7 @@ export default function SettingsModal({
   // Telegram & Alert Notification Settings
   const [telegramChatId, setTelegramChatId] = useState('');
   const [alertEmail, setAlertEmail] = useState('');
+  const [resendApiKey, setResendApiKey] = useState('');
   const [isSavedNotify, setIsSavedNotify] = useState(false);
   const [testStatus, setTestStatus] = useState<'idle' | 'sending' | 'sent' | 'error'>('idle');
   const [testMsg, setTestMsg] = useState('');
@@ -55,14 +56,17 @@ export default function SettingsModal({
     if (isOpen) {
       const savedTg = localStorage.getItem('nidus_telegram_chat_id') || '';
       const savedEmail = localStorage.getItem('nidus_default_alert_email') || userEmail || '';
+      const savedResendKey = localStorage.getItem('nidus_resend_api_key') || '';
       setTelegramChatId(savedTg);
       setAlertEmail(savedEmail);
+      setResendApiKey(savedResendKey);
     }
   }, [isOpen, userEmail]);
 
   const handleSaveNotificationSettings = () => {
     localStorage.setItem('nidus_telegram_chat_id', telegramChatId.trim());
     localStorage.setItem('nidus_default_alert_email', alertEmail.trim());
+    localStorage.setItem('nidus_resend_api_key', resendApiKey.trim());
     setIsSavedNotify(true);
     setTimeout(() => setIsSavedNotify(false), 2500);
   };
@@ -81,16 +85,17 @@ export default function SettingsModal({
           channel: telegramChatId && alertEmail ? 'all' : telegramChatId ? 'telegram' : 'email',
           telegramChatId: telegramChatId.trim(),
           email: alertEmail.trim(),
+          resendApiKey: resendApiKey.trim(),
           reminderLabel: 'Settings Verification',
         }),
       });
       const data = await res.json();
-      if (data.success || data.results?.telegram?.ok || data.results?.email?.id) {
+      if (data.success || data.results?.telegram?.ok || (data.results?.email && !data.results?.email?.error)) {
         setTestStatus('sent');
         setTestMsg('Verification alert dispatched successfully!');
       } else {
         setTestStatus('error');
-        setTestMsg(data.errors?.join(', ') || data.error || 'Failed to dispatch test notification.');
+        setTestMsg(data.errors?.join(' | ') || data.error || 'Failed to dispatch test notification.');
       }
     } catch (err: any) {
       setTestStatus('error');
@@ -642,6 +647,35 @@ export default function SettingsModal({
                     />
                     <p className="text-[10px] text-neutral-400 mt-1">
                       Calendar reminders and workspace notifications will be sent to this email address.
+                    </p>
+                  </div>
+
+                  <hr className="border-neutral-200/60" />
+
+                  {/* Resend Email API Key (Optional) */}
+                  <div>
+                    <label className="font-bold text-neutral-800 flex items-center justify-between mb-1">
+                      <span className="flex items-center gap-1.5">
+                        <Mail className="w-3.5 h-3.5 text-orange-500" /> Resend API Key (for Live Email Delivery)
+                      </span>
+                      <a
+                        href="https://resend.com/api-keys"
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="text-[10px] text-indigo-600 hover:underline font-bold"
+                      >
+                        Get Free Key ↗
+                      </a>
+                    </label>
+                    <input
+                      type="password"
+                      value={resendApiKey}
+                      onChange={(e) => setResendApiKey(e.target.value)}
+                      placeholder="re_123456789_..."
+                      className="w-full bg-white border border-neutral-300 rounded-lg px-3 py-2 text-xs font-mono text-neutral-800 outline-none focus:ring-2 focus:ring-indigo-500/20"
+                    />
+                    <p className="text-[10px] text-neutral-400 mt-1">
+                      Add your free Resend key here (or as <code>RESEND_API_KEY</code> in <code>.env</code>) to receive direct email alerts.
                     </p>
                   </div>
 

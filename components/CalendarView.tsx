@@ -370,6 +370,7 @@ export default function CalendarView({ isSidebarOpen, onOpenSidebar }: CalendarV
 
             const defaultTg = evt.reminder_telegram_chat_id || localStorage.getItem('nidus_telegram_chat_id') || '';
             const defaultEmail = evt.reminder_email || localStorage.getItem('nidus_default_alert_email') || '';
+            const resendApiKey = localStorage.getItem('nidus_resend_api_key') || '';
 
             // Dispatch to Notification API
             try {
@@ -383,6 +384,7 @@ export default function CalendarView({ isSidebarOpen, onOpenSidebar }: CalendarV
                   channel: evt.reminder_channel_telegram && evt.reminder_channel_email ? 'all' : evt.reminder_channel_telegram ? 'telegram' : 'email',
                   telegramChatId: defaultTg,
                   email: defaultEmail,
+                  resendApiKey,
                   reminderLabel,
                 }),
               }).catch(() => {});
@@ -546,6 +548,7 @@ export default function CalendarView({ isSidebarOpen, onOpenSidebar }: CalendarV
   const handleSendTestNotification = async () => {
     setTestNotifyStatus('sending');
     setTestNotifyMsg('');
+    const resendApiKey = localStorage.getItem('nidus_resend_api_key') || '';
     try {
       const res = await fetch('/api/calendar/notify', {
         method: 'POST',
@@ -557,16 +560,17 @@ export default function CalendarView({ isSidebarOpen, onOpenSidebar }: CalendarV
           channel: formReminderChannelEmail && formReminderChannelTelegram ? 'all' : formReminderChannelTelegram ? 'telegram' : 'email',
           telegramChatId: formReminderTelegramChatId.trim(),
           email: formReminderEmail.trim(),
+          resendApiKey: resendApiKey.trim(),
           reminderLabel: formReminderType === '3h' ? '3 hours before' : formReminderType === '1h' ? '1 hour before' : formReminderType === '30m' ? '30 minutes before' : formReminderType === 'custom' ? `At custom time: ${formReminderCustomDate} ${formReminderCustomTime}` : 'Event scheduled reminder',
         }),
       });
       const data = await res.json();
-      if (data.success || data.results?.telegram?.ok || data.results?.email?.id) {
+      if (data.success || data.results?.telegram?.ok || (data.results?.email && !data.results?.email?.error)) {
         setTestNotifyStatus('sent');
         setTestNotifyMsg('Test reminder dispatched successfully!');
       } else {
         setTestNotifyStatus('error');
-        setTestNotifyMsg(data.errors?.join(', ') || data.error || 'Failed to dispatch test reminder.');
+        setTestNotifyMsg(data.errors?.join(' | ') || data.error || 'Failed to dispatch test reminder.');
       }
     } catch (err: any) {
       setTestNotifyStatus('error');

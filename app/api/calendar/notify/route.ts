@@ -65,7 +65,9 @@ export async function POST(req: Request) {
 
     // 2. Dispatch Email Notification
     if ((channel === 'email' || channel === 'all') && email) {
-      const resendApiKey = process.env.RESEND_API_KEY;
+      const resendApiKey = body.resendApiKey || process.env.RESEND_API_KEY;
+      const fromEmail = process.env.EMAIL_FROM || 'Nidus Calendar <onboarding@resend.dev>';
+
       if (resendApiKey) {
         try {
           const emailRes = await fetch('https://api.resend.com/emails', {
@@ -75,37 +77,42 @@ export async function POST(req: Request) {
               Authorization: `Bearer ${resendApiKey}`,
             },
             body: JSON.stringify({
-              from: 'Nidus Calendar <notifications@nidus.app>',
+              from: fromEmail,
               to: [email],
               subject: `Reminder: ${eventTitle || 'Upcoming Event'}`,
               html: `
-                <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; max-width: 560px; margin: 0 auto; padding: 24px; border: 1px solid #e5e7eb; border-radius: 8px; background: #ffffff;">
+                <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; max-width: 560px; margin: 0 auto; padding: 24px; border: 1px solid #e5e7eb; border-radius: 12px; background: #ffffff;">
                   <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 16px;">
-                    <span style="font-size: 20px;">📅</span>
-                    <h2 style="margin: 0; font-size: 18px; color: #111827; font-weight: 700;">Nidus Calendar Reminder</h2>
+                    <span style="font-size: 24px;">📅</span>
+                    <h2 style="margin: 0; font-size: 18px; color: #111827; font-weight: 800;">Nidus Calendar Reminder</h2>
                   </div>
-                  <div style="padding: 16px; background: #f9fafb; border-radius: 6px; border-left: 4px solid #ff6600; margin-bottom: 16px;">
-                    <h3 style="margin: 0 0 8px 0; font-size: 16px; color: #111827;">${eventTitle}</h3>
+                  <div style="padding: 16px; background: #f9fafb; border-radius: 8px; border-left: 4px solid #ff6600; margin-bottom: 16px;">
+                    <h3 style="margin: 0 0 8px 0; font-size: 16px; color: #111827; font-weight: 700;">${eventTitle}</h3>
                     <p style="margin: 0; font-size: 14px; color: #4b5563;"><strong>Time:</strong> ${formattedTime}</p>
-                    <p style="margin: 4px 0 0 0; font-size: 13px; color: #6b7280;"><strong>Reminder:</strong> ${reminderLabel || 'Alert'}</p>
-                    ${description ? `<p style="margin: 8px 0 0 0; font-size: 13px; color: #374151;">${description}</p>` : ''}
+                    <p style="margin: 6px 0 0 0; font-size: 13px; color: #6b7280;"><strong>Reminder:</strong> ${reminderLabel || 'Alert'}</p>
+                    ${description ? `<p style="margin: 10px 0 0 0; font-size: 13px; color: #374151; line-height: 1.5;">${description}</p>` : ''}
                   </div>
                   <p style="font-size: 12px; color: #9ca3af; margin: 0;">Sent automatically by your Nidus Workspace.</p>
                 </div>
               `,
             }),
           });
+
           const emailData = await emailRes.json();
           results.email = emailData;
+
+          if (!emailRes.ok || emailData.error) {
+            const errMsg = emailData.error?.message || emailData.message || `Resend HTTP error ${emailRes.status}`;
+            errors.push(`Email error: ${errMsg}`);
+          }
         } catch (err: any) {
-          errors.push(`Email send failed: ${err.message}`);
+          errors.push(`Email delivery failed: ${err.message}`);
         }
       } else {
-        // Mock / simulation mode when Resend is not configured in env
+        errors.push('Missing RESEND_API_KEY. Please add RESEND_API_KEY to your .env / Vercel settings or in Nidus Settings > Notifications to deliver real emails.');
         results.email = {
-          ok: true,
-          simulated: true,
-          message: `Email notification queued for ${email}. Set RESEND_API_KEY in .env for live direct dispatch.`,
+          ok: false,
+          error: 'Missing RESEND_API_KEY',
         };
       }
     }
