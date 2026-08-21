@@ -5,7 +5,7 @@ import {
   Calendar as CalendarIcon, ChevronLeft, ChevronRight, Plus, Search, X,
   Clock, MapPin, AlignLeft, CheckSquare, Square, Tag, Trash2, Edit3,
   ExternalLink, Upload, Download, RefreshCw, CheckCircle2, CloudUpload,
-  Layers, AlertTriangle, FileText, Check, Repeat, Bell, Mail, Send, MessageSquare
+  Layers, AlertTriangle, FileText, Check, Repeat, Bell, Mail, Send, MessageSquare, PanelLeft
 } from 'lucide-react';
 import { CalendarEvent, CalendarViewMode } from '../lib/types';
 import { supabase } from '../lib/supabase';
@@ -315,6 +315,102 @@ export default function CalendarView({ isSidebarOpen, onOpenSidebar }: CalendarV
       syncEventsToCloud(updated);
     }, 400);
   }, [syncEventsToCloud]);
+
+  // ── Automated Scheduled Reminder Watcher (Asia/Kolkata / IST GMT+5:30) ──
+  useEffect(() => {
+    if (!events || events.length === 0) return;
+
+    const checkDueReminders = async () => {
+      const now = Date.now();
+
+      for (const evt of events) {
+        if (!evt.reminder_type || evt.reminder_type === 'none') continue;
+        if (!evt.start_time) continue;
+
+        const eventStartMs = new Date(evt.start_time).getTime();
+        let reminderMs = eventStartMs;
+
+        if (evt.reminder_type === 'at_event') {
+          reminderMs = eventStartMs;
+        } else if (evt.reminder_type === '15m') {
+          reminderMs = eventStartMs - 15 * 60 * 1000;
+        } else if (evt.reminder_type === '30m') {
+          reminderMs = eventStartMs - 30 * 60 * 1000;
+        } else if (evt.reminder_type === '1h') {
+          reminderMs = eventStartMs - 60 * 60 * 1000;
+        } else if (evt.reminder_type === '3h') {
+          reminderMs = eventStartMs - 3 * 60 * 60 * 1000;
+        } else if (evt.reminder_type === '1d') {
+          reminderMs = eventStartMs - 24 * 60 * 60 * 1000;
+        } else if (evt.reminder_type === 'custom' && evt.reminder_custom_time) {
+          reminderMs = new Date(evt.reminder_custom_time).getTime();
+        }
+
+        // Is it due now? (between reminderMs - 30s and reminderMs + 2 hours)
+        if (now >= reminderMs - 30000 && now - reminderMs <= 2 * 60 * 60 * 1000) {
+          const sentKey = `nidus_alert_sent_${evt.id}_${reminderMs}`;
+          if (!localStorage.getItem(sentKey)) {
+            // Mark as sent immediately to prevent duplicate triggers
+            localStorage.setItem(sentKey, new Date().toISOString());
+
+            const reminderLabel =
+              evt.reminder_type === '3h'
+                ? '3 hours before'
+                : evt.reminder_type === '1h'
+                ? '1 hour before'
+                : evt.reminder_type === '30m'
+                ? '30 minutes before'
+                : evt.reminder_type === '15m'
+                ? '15 minutes before'
+                : evt.reminder_type === '1d'
+                ? '1 day before'
+                : evt.reminder_type === 'at_event'
+                ? 'At event start'
+                : 'Scheduled Alert';
+
+            const defaultTg = evt.reminder_telegram_chat_id || localStorage.getItem('nidus_telegram_chat_id') || '';
+            const defaultEmail = evt.reminder_email || localStorage.getItem('nidus_default_alert_email') || '';
+
+            // Dispatch to Notification API
+            try {
+              fetch('/api/calendar/notify', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                  eventTitle: evt.title,
+                  startTime: evt.start_time,
+                  description: evt.description || '',
+                  channel: evt.reminder_channel_telegram && evt.reminder_channel_email ? 'all' : evt.reminder_channel_telegram ? 'telegram' : 'email',
+                  telegramChatId: defaultTg,
+                  email: defaultEmail,
+                  reminderLabel,
+                }),
+              }).catch(() => {});
+            } catch (e) {}
+
+            // In-browser Notification
+            if (typeof window !== 'undefined' && 'Notification' in window && Notification.permission === 'granted') {
+              try {
+                new Notification(`Reminder: ${evt.title}`, {
+                  body: `${reminderLabel} • Time: ${new Date(evt.start_time).toLocaleTimeString('en-IN', { timeZone: 'Asia/Kolkata', hour: '2-digit', minute: '2-digit' })} IST`,
+                  icon: '/favicon.ico',
+                });
+              } catch (e) {}
+            }
+          }
+        }
+      }
+    };
+
+    // Request notification permission if needed
+    if (typeof window !== 'undefined' && 'Notification' in window && Notification.permission === 'default') {
+      Notification.requestPermission().catch(() => {});
+    }
+
+    checkDueReminders();
+    const interval = setInterval(checkDueReminders, 15000);
+    return () => clearInterval(interval);
+  }, [events]);
 
   // ── Date Navigation Helpers ────────────────────────────────────
 
@@ -927,7 +1023,7 @@ export default function CalendarView({ isSidebarOpen, onOpenSidebar }: CalendarV
               className="p-1.5 hover:bg-neutral-100 rounded-md text-neutral-600 cursor-pointer mr-0.5"
               title="Open Sidebar"
             >
-              <CalendarIcon className="w-4.5 h-4.5" style={{ color: 'var(--accent-color)' }} />
+              <PanelLeft className="w-4.5 h-4.5 text-neutral-600" />
             </button>
           )}
 

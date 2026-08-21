@@ -17,7 +17,18 @@ export async function POST(req: Request) {
     const results: { telegram?: any; email?: any; errors?: string[] } = {};
     const errors: string[] = [];
 
-    const formattedTime = startTime ? new Date(startTime).toLocaleString() : 'Scheduled time';
+    const formattedTime = startTime
+      ? new Date(startTime).toLocaleString('en-IN', {
+          timeZone: 'Asia/Kolkata',
+          weekday: 'short',
+          day: 'numeric',
+          month: 'short',
+          year: 'numeric',
+          hour: '2-digit',
+          minute: '2-digit',
+          hour12: true,
+        }) + ' IST (GMT+5:30)'
+      : 'Scheduled time';
     const messageText = `🔔 *Nidus Calendar Reminder*\n\n📌 *${eventTitle || 'Upcoming Event'}*\n⏰ *Time:* ${formattedTime}\n⏱ *Alert:* ${reminderLabel || 'Reminder'}${description ? `\n📝 *Notes:* ${description}` : ''}\n\n_Sent from Nidus Workspace_`;
 
     // 1. Dispatch Telegram Notification
