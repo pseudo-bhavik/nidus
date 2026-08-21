@@ -131,7 +131,7 @@ export async function POST(req: Request) {
             body: JSON.stringify({
               from: fromEmail,
               to: [email],
-              subject: `Reminder: ${eventTitle || 'Upcoming Event'}`,
+              subject: `🔔 Reminder: ${eventTitle || 'Upcoming Event'}`,
               html: `
                 <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; max-width: 560px; margin: 0 auto; padding: 24px; border: 1px solid #e5e7eb; border-radius: 12px; background: #ffffff;">
                   <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 16px;">
@@ -164,37 +164,8 @@ export async function POST(req: Request) {
         }
       }
 
-      // Method C: Supabase Auth Mailer trigger (Uses personal mail configured in Supabase project)
-      if (!emailDispatched) {
-        try {
-          const { error: sbError } = await supabase.auth.signInWithOtp({
-            email,
-            options: {
-              data: {
-                event_title: eventTitle,
-                event_time: formattedTime,
-                reminder_label: reminderLabel,
-              },
-            },
-          });
-
-          if (!sbError) {
-            results.email = {
-              ok: true,
-              provider: 'supabase_auth',
-              message: `Reminder email dispatched via Supabase Auth mailer to ${email}`,
-            };
-            emailDispatched = true;
-          } else {
-            errors.push(`Supabase Mailer note: ${sbError.message}`);
-          }
-        } catch (err: any) {
-          errors.push(`Supabase Mailer failed: ${err.message}`);
-        }
-      }
-
       if (!emailDispatched && errors.length === 0) {
-        errors.push('No email provider configured. Please configure your Personal Email (SMTP) or Supabase Auth in Settings > Notifications.');
+        errors.push('Please configure your Email App Password (or SMTP credentials) in Settings > Notifications & Alerts to send reminder emails.');
       }
     }
 

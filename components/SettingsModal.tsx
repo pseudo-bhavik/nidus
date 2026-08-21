@@ -711,7 +711,16 @@ export default function SettingsModal({
                       </div>
                     </div>
                     <p className="text-[10px] text-neutral-400">
-                      If using Gmail: Generate a 16-character <strong>Google App Password</strong> under your Google Account Security $\rightarrow$ 2-Step Verification $\rightarrow$ App Passwords.
+                      If using Gmail: Generate a 16-character{' '}
+                      <a
+                        href="https://myaccount.google.com/apppasswords"
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="text-indigo-600 font-bold hover:underline"
+                      >
+                        Google App Password ↗
+                      </a>{' '}
+                      under your Google Account Security &rarr; 2-Step Verification &rarr; App Passwords.
                     </p>
                   </div>
 
