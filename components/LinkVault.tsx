@@ -278,26 +278,29 @@ export default function LinkVault({ isSidebarOpen, onOpenSidebar }: LinkVaultPro
     };
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
-        if (contextMenu) { setContextMenu(null); return; }
-        if (sectionMenu) { setSectionMenu(null); return; }
-        if (isImportModalOpen) { setIsImportModalOpen(false); return; }
-        if (sectionToDelete) { setSectionToDelete(null); return; }
-        if (isConfirmingWipeAll) { setIsConfirmingWipeAll(false); return; }
-        if (bulkPasteSection) { setBulkPasteSection(null); return; }
-        if (addingLinkToSection) { setAddingLinkToSection(null); setNewLinkUrl(''); return; }
-        if (creatingSubfolderTargetId) { setCreatingSubfolderTargetId(null); setNewSubfolderTitle(''); return; }
-        if (isCreatingSection) { setIsCreatingSection(false); setNewSectionTitle(''); return; }
-        if (renamingSectionId) { setRenamingSectionId(null); setRenameValue(''); return; }
+        if (contextMenu) { e.preventDefault(); e.stopPropagation(); e.stopImmediatePropagation(); setContextMenu(null); return; }
+        if (sectionMenu) { e.preventDefault(); e.stopPropagation(); e.stopImmediatePropagation(); setSectionMenu(null); return; }
+        if (isImportModalOpen) { e.preventDefault(); e.stopPropagation(); e.stopImmediatePropagation(); setIsImportModalOpen(false); return; }
+        if (sectionToDelete) { e.preventDefault(); e.stopPropagation(); e.stopImmediatePropagation(); setSectionToDelete(null); return; }
+        if (isConfirmingWipeAll) { e.preventDefault(); e.stopPropagation(); e.stopImmediatePropagation(); setIsConfirmingWipeAll(false); return; }
+        if (bulkPasteSection) { e.preventDefault(); e.stopPropagation(); e.stopImmediatePropagation(); setBulkPasteSection(null); return; }
+        if (addingLinkToSection) { e.preventDefault(); e.stopPropagation(); e.stopImmediatePropagation(); setAddingLinkToSection(null); setNewLinkUrl(''); return; }
+        if (creatingSubfolderTargetId) { e.preventDefault(); e.stopPropagation(); e.stopImmediatePropagation(); setCreatingSubfolderTargetId(null); setNewSubfolderTitle(''); return; }
+        if (isCreatingSection) { e.preventDefault(); e.stopPropagation(); e.stopImmediatePropagation(); setIsCreatingSection(false); setNewSectionTitle(''); return; }
+        if (renamingSectionId) { e.preventDefault(); e.stopPropagation(); e.stopImmediatePropagation(); setRenamingSectionId(null); setRenameValue(''); return; }
         if (selectedLinkIds.size > 0 || selectedSectionIds.size > 0) {
+          e.preventDefault(); e.stopPropagation(); e.stopImmediatePropagation();
           setSelectedLinkIds(new Set());
           setSelectedSectionIds(new Set());
           return;
         }
         if (searchQuery) {
+          e.preventDefault(); e.stopPropagation(); e.stopImmediatePropagation();
           setSearchQuery('');
           return;
         }
         if (document.activeElement instanceof HTMLElement && (document.activeElement.tagName === 'INPUT' || document.activeElement.tagName === 'TEXTAREA')) {
+          e.preventDefault(); e.stopPropagation(); e.stopImmediatePropagation();
           document.activeElement.blur();
           return;
         }
