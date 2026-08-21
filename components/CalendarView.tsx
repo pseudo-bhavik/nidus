@@ -178,11 +178,16 @@ export default function CalendarView({ isSidebarOpen, onOpenSidebar }: CalendarV
 
   const syncEventsToCloud = useCallback(async (eventsToSync: CalendarEvent[]) => {
     if (!eventsToSync) return;
-    setCloudSyncStatus('syncing');
     try {
       const { data: { session } } = await supabase.auth.getSession();
-      const uid = session?.user?.id || null;
+      const uid = session?.user?.id;
+      if (!uid) {
+        // Guest mode: Do NOT sync to shared cloud database
+        setCloudSyncStatus('idle');
+        return;
+      }
 
+      setCloudSyncStatus('syncing');
       const upsertPayload = eventsToSync.map((evt) => ({
         id: evt.id,
         user_id: uid,
@@ -226,74 +231,69 @@ export default function CalendarView({ isSidebarOpen, onOpenSidebar }: CalendarV
     let isMounted = true;
 
     const loadCalendarData = async () => {
-      let loadedFromDb = false;
-
       try {
         const { data: { session } } = await supabase.auth.getSession();
-        let query = supabase.from('calendar_events').select('*');
-        if (session?.user) {
-          query = query.eq('user_id', session.user.id);
-        }
-        const { data: dbEvents, error } = await query.order('start_time', { ascending: true });
+        const uid = session?.user?.id;
 
-        if (!error && dbEvents && dbEvents.length > 0 && isMounted) {
-          const mapped: CalendarEvent[] = dbEvents.map((d: any) => ({
-            id: d.id,
-            user_id: d.user_id,
-            title: d.title || 'Untitled Event',
-            description: d.description || null,
-            location_url: d.location_url || null,
-            start_time: d.start_time,
-            end_time: d.end_time,
-            is_all_day: d.is_all_day ?? false,
-            color: d.color || 'orange',
-            category: d.category || 'General',
-            is_completed: d.is_completed ?? false,
-            is_task: d.is_task ?? false,
-            recurrence_rule: d.recurrence_rule || null,
-            reminder_type: d.reminder_type || 'none',
-            reminder_custom_time: d.reminder_custom_time || null,
-            reminder_channel_email: d.reminder_channel_email ?? false,
-            reminder_email: d.reminder_email || null,
-            reminder_channel_telegram: d.reminder_channel_telegram ?? false,
-            reminder_telegram_chat_id: d.reminder_telegram_chat_id || null,
-            created_at: d.created_at,
-            updated_at: d.updated_at,
-          }));
+        if (uid) {
+          // Logged in: fetch ONLY this user's private events
+          const { data: dbEvents, error } = await supabase
+            .from('calendar_events')
+            .select('*')
+            .eq('user_id', uid)
+            .order('start_time', { ascending: true });
 
-          setEvents(mapped);
-          setCloudSyncStatus('synced');
-          loadedFromDb = true;
-          try {
-            localStorage.setItem(STORAGE_KEY, JSON.stringify(mapped));
-          } catch (e) {}
-          setIsLoaded(true);
-          return;
+          if (!error && dbEvents && isMounted) {
+            const mapped: CalendarEvent[] = dbEvents.map((d: any) => ({
+              id: d.id,
+              user_id: d.user_id,
+              title: d.title || 'Untitled Event',
+              description: d.description || null,
+              location_url: d.location_url || null,
+              start_time: d.start_time,
+              end_time: d.end_time,
+              is_all_day: d.is_all_day ?? false,
+              color: d.color || 'orange',
+              category: d.category || 'General',
+              is_completed: d.is_completed ?? false,
+              is_task: d.is_task ?? false,
+              recurrence_rule: d.recurrence_rule || null,
+              reminder_type: d.reminder_type || 'none',
+              reminder_custom_time: d.reminder_custom_time || null,
+              reminder_channel_email: d.reminder_channel_email ?? false,
+              reminder_email: d.reminder_email || null,
+              reminder_channel_telegram: d.reminder_channel_telegram ?? false,
+              reminder_telegram_chat_id: d.reminder_telegram_chat_id || null,
+              created_at: d.created_at,
+              updated_at: d.updated_at,
+            }));
+
+            setEvents(mapped);
+            setCloudSyncStatus('synced');
+            try {
+              localStorage.setItem(`${STORAGE_KEY}_${uid}`, JSON.stringify(mapped));
+            } catch (e) {}
+            setIsLoaded(true);
+            return;
+          }
         }
       } catch (e) {}
 
-      // Fallback to localStorage & auto-sync to newly created database table!
+      // Guest / Offline Mode: load strictly from user's local browser storage
       try {
-        const saved = localStorage.getItem(STORAGE_KEY);
-        if (saved) {
-          const parsed = JSON.parse(saved);
-          if (Array.isArray(parsed) && parsed.length > 0 && isMounted) {
+        const local = localStorage.getItem(STORAGE_KEY);
+        if (local && isMounted) {
+          const parsed = JSON.parse(local);
+          if (Array.isArray(parsed)) {
             setEvents(parsed);
             setIsLoaded(true);
-            if (!loadedFromDb) {
-              syncEventsToCloud(parsed);
-            }
             return;
           }
         }
       } catch (e) {}
 
       if (isMounted) {
-        setEvents(DEFAULT_SAMPLE_EVENTS);
-        try {
-          localStorage.setItem(STORAGE_KEY, JSON.stringify(DEFAULT_SAMPLE_EVENTS));
-        } catch (e) {}
-        syncEventsToCloud(DEFAULT_SAMPLE_EVENTS);
+        setEvents([]);
         setIsLoaded(true);
       }
     };

@@ -160,12 +160,17 @@ export default function LinkVault({ isSidebarOpen, onOpenSidebar }: LinkVaultPro
 
   // Direct sync function to push sections to Supabase
   const syncSectionsToCloud = useCallback(async (sectionsToSync: VaultSection[]) => {
-    if (!sectionsToSync || sectionsToSync.length === 0) return;
-    setCloudSyncStatus('syncing');
+    if (!sectionsToSync) return;
     try {
       const { data: { session } } = await supabase.auth.getSession();
-      const uid = session?.user?.id || null;
+      const uid = session?.user?.id;
+      if (!uid) {
+        // Guest mode: Do NOT sync to shared cloud database
+        setCloudSyncStatus('idle');
+        return;
+      }
 
+      setCloudSyncStatus('syncing');
       const upsertPayload = sectionsToSync.map((sec, idx) => ({
         id: sec.id,
         user_id: uid,
@@ -197,52 +202,50 @@ export default function LinkVault({ isSidebarOpen, onOpenSidebar }: LinkVaultPro
     let isMounted = true;
 
     const loadVaultData = async () => {
-      let loadedFromDb = false;
-
       try {
         const { data: { session } } = await supabase.auth.getSession();
-        let query = supabase.from('vault_sections').select('*');
-        if (session?.user) {
-          query = query.eq('user_id', session.user.id);
-        }
-        const { data: dbSections, error } = await query.order('position', { ascending: true });
+        const uid = session?.user?.id;
 
-        if (!error && dbSections && dbSections.length > 0 && isMounted) {
-          const mappedSections: VaultSection[] = dbSections.map((s: any) => ({
-            id: s.id,
-            title: s.title || 'Untitled Section',
-            color: s.color || 'emerald',
-            links: Array.isArray(s.links) ? s.links : [],
-            subsections: Array.isArray(s.subsections) ? s.subsections : [],
-            is_collapsed: s.is_collapsed ?? false,
-            position: typeof s.position === 'number' ? s.position : 0,
-            created_at: s.created_at || new Date().toISOString(),
-            updated_at: s.updated_at || new Date().toISOString(),
-          }));
+        if (uid) {
+          // Logged in: query ONLY this user's vault sections
+          const { data: dbSections, error } = await supabase
+            .from('vault_sections')
+            .select('*')
+            .eq('user_id', uid)
+            .order('position', { ascending: true });
 
-          setSections(mappedSections);
-          setCloudSyncStatus('synced');
-          loadedFromDb = true;
-          try {
-            localStorage.setItem(STORAGE_KEY, JSON.stringify(mappedSections));
-          } catch (e) {}
-          setIsLoaded(true);
-          return;
+          if (!error && dbSections && isMounted) {
+            const mappedSections: VaultSection[] = dbSections.map((s: any) => ({
+              id: s.id,
+              title: s.title || 'Untitled Section',
+              color: s.color || 'emerald',
+              links: Array.isArray(s.links) ? s.links : [],
+              subsections: Array.isArray(s.subsections) ? s.subsections : [],
+              is_collapsed: s.is_collapsed ?? false,
+              position: typeof s.position === 'number' ? s.position : 0,
+              created_at: s.created_at || new Date().toISOString(),
+              updated_at: s.updated_at || new Date().toISOString(),
+            }));
+
+            setSections(mappedSections);
+            setCloudSyncStatus('synced');
+            try {
+              localStorage.setItem(`${STORAGE_KEY}_${uid}`, JSON.stringify(mappedSections));
+            } catch (e) {}
+            setIsLoaded(true);
+            return;
+          }
         }
       } catch (e) {}
 
-      // Fallback to localStorage & auto-sync to newly created database table!
+      // Guest / Offline Mode: local only
       try {
         const saved = localStorage.getItem(STORAGE_KEY);
-        if (saved) {
+        if (saved && isMounted) {
           const parsed = JSON.parse(saved);
-          if (Array.isArray(parsed) && parsed.length > 0 && isMounted) {
+          if (Array.isArray(parsed) && parsed.length > 0) {
             setSections(parsed);
             setIsLoaded(true);
-            if (!loadedFromDb) {
-              // Auto-migrate local sections to Supabase database!
-              syncSectionsToCloud(parsed);
-            }
             return;
           }
         }

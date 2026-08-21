@@ -116,45 +116,49 @@ export default function WhiteboardCanvas({
 
       try {
         const { data: { user } } = await supabase.auth.getUser();
-        let query = supabase.from('whiteboard_docs').select('*');
         if (user) {
-          query = query.eq('user_id', user.id);
-        }
-        const { data: dbDocs, error } = await query.order('updated_at', { ascending: false });
+          // Logged in: query ONLY this user's whiteboard docs
+          const { data: dbDocs, error } = await supabase
+            .from('whiteboard_docs')
+            .select('*')
+            .eq('user_id', user.id)
+            .order('updated_at', { ascending: false });
 
-        if (!error && dbDocs && dbDocs.length > 0 && isMounted) {
-          const mappedDocs: WhiteboardCanvasDoc[] = dbDocs.map((d: any) => ({
-            id: d.id,
-            title: d.title || 'Canvas Note',
-            elementsData: d.elements_data || [],
-            appStateData: d.app_state_data || {},
-            position: typeof d.app_state_data?.position === 'number' ? d.app_state_data.position : undefined,
-            created_at: d.created_at,
-            updated_at: d.updated_at,
-          }));
+          if (!error && dbDocs && dbDocs.length > 0 && isMounted) {
+            const mappedDocs: WhiteboardCanvasDoc[] = dbDocs.map((d: any) => ({
+              id: d.id,
+              title: d.title || 'Canvas Note',
+              elementsData: d.elements_data || [],
+              appStateData: d.app_state_data || {},
+              position: typeof d.app_state_data?.position === 'number' ? d.app_state_data.position : undefined,
+              created_at: d.created_at,
+              updated_at: d.updated_at,
+            }));
 
-          // Sort mappedDocs strictly by position / saved order sequence
-          mappedDocs.sort((a, b) => {
-            const idxA = savedOrderIds.indexOf(a.id);
-            const idxB = savedOrderIds.indexOf(b.id);
-            const posA = typeof a.position === 'number' ? a.position : (idxA !== -1 ? idxA : 999);
-            const posB = typeof b.position === 'number' ? b.position : (idxB !== -1 ? idxB : 999);
-            return posA - posB;
-          });
+            // Sort mappedDocs strictly by position / saved order sequence
+            mappedDocs.sort((a, b) => {
+              const idxA = savedOrderIds.indexOf(a.id);
+              const idxB = savedOrderIds.indexOf(b.id);
+              const posA = typeof a.position === 'number' ? a.position : (idxA !== -1 ? idxA : 999);
+              const posB = typeof b.position === 'number' ? b.position : (idxB !== -1 ? idxB : 999);
+              return posA - posB;
+            });
 
-          setDocs(mappedDocs);
-          setActiveDocId(mappedDocs[0].id);
-          setIsDataLoaded(true);
-          return;
+            setDocs(mappedDocs);
+            setActiveDocId(mappedDocs[0].id);
+            localStorage.setItem(`nidus_whiteboard_docs_${user.id}`, JSON.stringify(mappedDocs));
+            setIsDataLoaded(true);
+            return;
+          }
         }
       } catch (err) {}
 
       // Fallback to localStorage for guest / offline mode
       try {
         const saved = localStorage.getItem('nidus_whiteboard_docs');
-        if (saved) {
+        if (saved && isMounted) {
           const parsed = JSON.parse(saved);
-          if (Array.isArray(parsed) && parsed.length > 0 && isMounted) {
+          if (Array.isArray(parsed) && parsed.length > 0) {
             setDocs(parsed);
             setActiveDocId(parsed[0].id);
             setIsDataLoaded(true);
@@ -258,9 +262,11 @@ export default function WhiteboardCanvas({
   const syncDocToSupabase = async (doc: WhiteboardCanvasDoc) => {
     try {
       const { data: { user } } = await supabase.auth.getUser();
+      if (!user?.id) return; // Guest mode: DO NOT upload to cloud!
+
       await supabase.from('whiteboard_docs').upsert({
         id: doc.id,
-        user_id: user?.id || null,
+        user_id: user.id,
         title: doc.title,
         elements_data: doc.elementsData,
         app_state_data: doc.appStateData,

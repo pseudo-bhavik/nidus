@@ -118,57 +118,59 @@ export default function QuickStickyNotesWidget({ onOpenFullNotes }: QuickStickyN
 
       try {
         const { data: { user } } = await supabase.auth.getUser();
-        let query = supabase.from('sticky_notes').select('*');
         if (user) {
-          query = query.eq('user_id', user.id);
-        }
-        const { data: dbNotes, error } = await query.order('created_at', { ascending: false });
+          const { data: dbNotes, error } = await supabase
+            .from('sticky_notes')
+            .select('*')
+            .eq('user_id', user.id)
+            .order('created_at', { ascending: false });
 
-        if (!error && dbNotes && dbNotes.length > 0 && isMounted) {
-          const mapped: StickyNote[] = dbNotes.map((n: any) => ({
-            id: n.id,
-            title: n.title || 'Untitled Note',
-            content: n.content || '',
-            color: n.color || 'yellow',
-            is_pinned: n.is_pinned ?? false,
-            position: typeof n.position === 'number' ? n.position : undefined,
-            created_at: n.created_at,
-            updated_at: n.updated_at,
-          }));
+          if (!error && dbNotes && isMounted) {
+            const mapped: StickyNote[] = dbNotes.map((n: any) => ({
+              id: n.id,
+              title: n.title || 'Untitled Note',
+              content: n.content || '',
+              color: n.color || 'yellow',
+              is_pinned: n.is_pinned ?? false,
+              position: typeof n.position === 'number' ? n.position : undefined,
+              created_at: n.created_at,
+              updated_at: n.updated_at,
+            }));
 
-          // Preserve exact drag & drop sequence
-          mapped.sort((a, b) => {
-            const idxA = savedOrderIds.indexOf(a.id);
-            const idxB = savedOrderIds.indexOf(b.id);
-            const posA = typeof a.position === 'number' ? a.position : (idxA !== -1 ? idxA : 999);
-            const posB = typeof b.position === 'number' ? b.position : (idxB !== -1 ? idxB : 999);
-            return posA - posB;
-          });
+            // Preserve exact drag & drop sequence
+            mapped.sort((a, b) => {
+              const idxA = savedOrderIds.indexOf(a.id);
+              const idxB = savedOrderIds.indexOf(b.id);
+              const posA = typeof a.position === 'number' ? a.position : (idxA !== -1 ? idxA : 999);
+              const posB = typeof b.position === 'number' ? b.position : (idxB !== -1 ? idxB : 999);
+              return posA - posB;
+            });
 
-          setNotes(mapped);
-          const pinned = mapped.filter((n) => n.is_pinned);
-          setActiveTabId(pinned.length > 0 ? pinned[0].id : mapped[0].id);
-          localStorage.setItem('nidus_sticky_notes', JSON.stringify(mapped));
-          return;
+            setNotes(mapped);
+            const pinned = mapped.filter((n) => n.is_pinned);
+            setActiveTabId(pinned.length > 0 ? pinned[0].id : mapped[0]?.id || '');
+            localStorage.setItem(`nidus_sticky_notes_${user.id}`, JSON.stringify(mapped));
+            return;
+          }
         }
       } catch (e) {}
 
+      // Guest / Offline mode
       try {
         const saved = localStorage.getItem('nidus_sticky_notes');
-        if (saved) {
+        if (saved && isMounted) {
           const parsed = JSON.parse(saved);
-          if (Array.isArray(parsed) && parsed.length > 0 && isMounted) {
+          if (Array.isArray(parsed)) {
             setNotes(parsed);
             const pinned = parsed.filter((n: StickyNote) => n.is_pinned);
-            setActiveTabId(pinned.length > 0 ? pinned[0].id : parsed[0].id);
+            setActiveTabId(pinned.length > 0 ? pinned[0].id : parsed[0]?.id || '');
             return;
           }
         }
       } catch (e) {}
 
       if (isMounted) {
-        setNotes(DEFAULT_PINNED_NOTES);
-        setActiveTabId(DEFAULT_PINNED_NOTES[0].id);
+        setNotes([]);
       }
     };
 
@@ -190,9 +192,11 @@ export default function QuickStickyNotesWidget({ onOpenFullNotes }: QuickStickyN
     saveTimerRef.current = setTimeout(async () => {
       try {
         const { data: { user } } = await supabase.auth.getUser();
+        if (!user?.id) return; // Guest mode: DO NOT upload to cloud!
+
         const upsertPayload = updated.map((n) => ({
           id: n.id,
-          user_id: user?.id || null,
+          user_id: user.id,
           title: n.title,
           content: n.content,
           color: n.color,

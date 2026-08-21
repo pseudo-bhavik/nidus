@@ -310,14 +310,12 @@ export default function Dashboard({ initialView }: { initialView?: ViewType } = 
 
   // Load bookmarks (either from Supabase or localStorage fallback)
   const loadBookmarks = (connected = isDbConnected, uid = userId) => {
-    if (connected) {
-      let query = supabase.from('bookmarks').select('*');
-      if (uid) {
-        query = query.eq('user_id', uid);
-      } else {
-        query = query.is('user_id', null);
-      }
-      query.order('created_at', { ascending: false })
+    if (connected && uid) {
+      supabase
+        .from('bookmarks')
+        .select('*')
+        .eq('user_id', uid)
+        .order('created_at', { ascending: false })
         .then(({ data, error }) => {
           if (error) {
             console.error('Fetch bookmarks error:', error);
@@ -383,10 +381,8 @@ export default function Dashboard({ initialView }: { initialView?: ViewType } = 
         read_time_minutes: data.readTimeMinutes || 1,
       };
 
-      if (isDbConnected) {
-        const itemToInsert = userId 
-          ? { ...newBookmark, user_id: userId } 
-          : newBookmark;
+      if (isDbConnected && userId) {
+        const itemToInsert = { ...newBookmark, user_id: userId };
 
         const { data: dbData, error } = await supabase
           .from('bookmarks')
