@@ -9,6 +9,7 @@ import {
   CheckSquare, Square, Edit3, Trash
 } from 'lucide-react';
 import { VaultSection, VaultLink } from '../lib/types';
+import { supabase } from '../lib/supabase';
 
 const STORAGE_KEY = 'nidus_vault_sections';
 
@@ -153,26 +154,90 @@ export default function LinkVault({ isSidebarOpen, onOpenSidebar }: LinkVaultPro
   const [draggedSectionIdx, setDraggedSectionIdx] = useState<number | null>(null);
   const [dragOverSectionIdx, setDragOverSectionIdx] = useState<number | null>(null);
 
-  // Load from localStorage
+  // Supabase cloud save timer
+  const saveTimerRef = useRef<NodeJS.Timeout | null>(null);
+
+  // Load from Supabase (with localStorage fallback)
   useEffect(() => {
-    try {
-      const saved = localStorage.getItem(STORAGE_KEY);
-      if (saved) {
-        const parsed = JSON.parse(saved);
-        if (Array.isArray(parsed)) {
-          setSections(parsed);
+    let isMounted = true;
+
+    const loadVaultData = async () => {
+      try {
+        const { data: { user } } = await supabase.auth.getUser();
+        let query = supabase.from('vault_sections').select('*');
+        if (user) {
+          query = query.eq('user_id', user.id);
         }
-      }
-    } catch (e) {}
-    setIsLoaded(true);
+        const { data: dbSections, error } = await query.order('position', { ascending: true });
+
+        if (!error && dbSections && dbSections.length > 0 && isMounted) {
+          const mappedSections: VaultSection[] = dbSections.map((s: any) => ({
+            id: s.id,
+            title: s.title || 'Untitled Section',
+            color: s.color || 'emerald',
+            links: Array.isArray(s.links) ? s.links : [],
+            subsections: Array.isArray(s.subsections) ? s.subsections : [],
+            is_collapsed: s.is_collapsed ?? false,
+            position: typeof s.position === 'number' ? s.position : 0,
+            created_at: s.created_at || new Date().toISOString(),
+            updated_at: s.updated_at || new Date().toISOString(),
+          }));
+
+          setSections(mappedSections);
+          try {
+            localStorage.setItem(STORAGE_KEY, JSON.stringify(mappedSections));
+          } catch (e) {}
+          setIsLoaded(true);
+          return;
+        }
+      } catch (e) {}
+
+      // Fallback to localStorage
+      try {
+        const saved = localStorage.getItem(STORAGE_KEY);
+        if (saved) {
+          const parsed = JSON.parse(saved);
+          if (Array.isArray(parsed) && isMounted) {
+            setSections(parsed);
+          }
+        }
+      } catch (e) {}
+
+      if (isMounted) setIsLoaded(true);
+    };
+
+    loadVaultData();
+    return () => { isMounted = false; };
   }, []);
 
-  // Save to localStorage
+  // Save to localStorage & sync to Supabase
   const saveSections = useCallback((updated: VaultSection[]) => {
-    setSections(updated);
+    const indexed = updated.map((sec, idx) => ({ ...sec, position: idx }));
+    setSections(indexed);
     try {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(updated));
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(indexed));
     } catch (e) {}
+
+    // Debounced cloud sync to Supabase
+    if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
+    saveTimerRef.current = setTimeout(async () => {
+      try {
+        const { data: { user } } = await supabase.auth.getUser();
+        const upsertPayload = indexed.map((sec) => ({
+          id: sec.id,
+          user_id: user?.id || null,
+          title: sec.title,
+          color: sec.color,
+          links: sec.links,
+          subsections: sec.subsections || [],
+          is_collapsed: sec.is_collapsed,
+          position: sec.position,
+          created_at: sec.created_at || new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+        }));
+        await supabase.from('vault_sections').upsert(upsertPayload);
+      } catch (err) {}
+    }, 400);
   }, []);
 
   // Global listener to close context menu on click or escape
@@ -345,13 +410,14 @@ export default function LinkVault({ isSidebarOpen, onOpenSidebar }: LinkVaultPro
     setSelectedLinkIds(new Set());
   };
 
-  const handleBulkDeleteSelectedSections = () => {
+  const handleBulkDeleteSelectedSections = async () => {
     if (selectedSectionIds.size === 0) return;
-    const idsToDelete = new Set(selectedSectionIds);
+    const idsToDelete = Array.from(selectedSectionIds);
+    const idsSet = new Set(idsToDelete);
 
     const removeSections = (tree: VaultSection[]): VaultSection[] => {
       return tree
-        .filter((sec) => !idsToDelete.has(sec.id))
+        .filter((sec) => !idsSet.has(sec.id))
         .map((sec) => ({
           ...sec,
           subsections: sec.subsections ? removeSections(sec.subsections) : [],
@@ -361,6 +427,10 @@ export default function LinkVault({ isSidebarOpen, onOpenSidebar }: LinkVaultPro
     const updated = removeSections(sections);
     saveSections(updated);
     setSelectedSectionIds(new Set());
+
+    try {
+      await supabase.from('vault_sections').delete().in('id', idsToDelete);
+    } catch (err) {}
   };
 
   const handleDeleteAllSectionLinks = (sectionId: string) => {
@@ -373,11 +443,20 @@ export default function LinkVault({ isSidebarOpen, onOpenSidebar }: LinkVaultPro
     setSectionMenu(null);
   };
 
-  const handleWipeEntireVault = () => {
+  const handleWipeEntireVault = async () => {
     saveSections([]);
     setSelectedLinkIds(new Set());
     setSelectedSectionIds(new Set());
     setIsConfirmingWipeAll(false);
+
+    try {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (user) {
+        await supabase.from('vault_sections').delete().eq('user_id', user.id);
+      } else {
+        await supabase.from('vault_sections').delete();
+      }
+    } catch (err) {}
   };
 
   // ── True Multi-Level Bookmark Parser (Separating Root Collections) ──
@@ -808,15 +887,20 @@ export default function LinkVault({ isSidebarOpen, onOpenSidebar }: LinkVaultPro
     setCreatingSubfolderTargetId(null);
   };
 
-  const handleDeleteSection = () => {
+  const handleDeleteSection = async () => {
     if (!sectionToDelete) return;
-    saveSections(deleteSectionFromTree(sections, sectionToDelete.id));
+    const targetId = sectionToDelete.id;
+    saveSections(deleteSectionFromTree(sections, targetId));
     setSelectedSectionIds((prev) => {
       const next = new Set(prev);
-      next.delete(sectionToDelete.id);
+      next.delete(targetId);
       return next;
     });
     setSectionToDelete(null);
+
+    try {
+      await supabase.from('vault_sections').delete().eq('id', targetId);
+    } catch (err) {}
   };
 
   const handleRenameSection = (id: string) => {
