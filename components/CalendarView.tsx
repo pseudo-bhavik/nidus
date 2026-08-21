@@ -5,7 +5,7 @@ import {
   Calendar as CalendarIcon, ChevronLeft, ChevronRight, Plus, Search, X,
   Clock, MapPin, AlignLeft, CheckSquare, Square, Tag, Trash2, Edit3,
   ExternalLink, Upload, Download, RefreshCw, CheckCircle2, CloudUpload,
-  Layers, AlertTriangle, FileText, Check, Repeat
+  Layers, AlertTriangle, FileText, Check, Repeat, Bell, Mail, Send, MessageSquare
 } from 'lucide-react';
 import { CalendarEvent, CalendarViewMode } from '../lib/types';
 import { supabase } from '../lib/supabase';
@@ -144,6 +144,17 @@ export default function CalendarView({ isSidebarOpen, onOpenSidebar }: CalendarV
   const [formIsTask, setFormIsTask] = useState(false);
   const [formRecurrence, setFormRecurrence] = useState<string>('');
 
+  // Reminder & Notification Channels
+  const [formReminderType, setFormReminderType] = useState<string>('none');
+  const [formReminderCustomDate, setFormReminderCustomDate] = useState<string>('');
+  const [formReminderCustomTime, setFormReminderCustomTime] = useState<string>('09:00');
+  const [formReminderChannelEmail, setFormReminderChannelEmail] = useState<boolean>(true);
+  const [formReminderEmail, setFormReminderEmail] = useState<string>('');
+  const [formReminderChannelTelegram, setFormReminderChannelTelegram] = useState<boolean>(false);
+  const [formReminderTelegramChatId, setFormReminderTelegramChatId] = useState<string>('');
+  const [testNotifyStatus, setTestNotifyStatus] = useState<'idle' | 'sending' | 'sent' | 'error'>('idle');
+  const [testNotifyMsg, setTestNotifyMsg] = useState<string>('');
+
   // Delete Confirmation Modal
   const [eventToDelete, setEventToDelete] = useState<CalendarEvent | null>(null);
 
@@ -183,6 +194,12 @@ export default function CalendarView({ isSidebarOpen, onOpenSidebar }: CalendarV
         is_completed: evt.is_completed ?? false,
         is_task: evt.is_task ?? false,
         recurrence_rule: evt.recurrence_rule || null,
+        reminder_type: evt.reminder_type || 'none',
+        reminder_custom_time: evt.reminder_custom_time || null,
+        reminder_channel_email: evt.reminder_channel_email ?? false,
+        reminder_email: evt.reminder_email || null,
+        reminder_channel_telegram: evt.reminder_channel_telegram ?? false,
+        reminder_telegram_chat_id: evt.reminder_telegram_chat_id || null,
         created_at: evt.created_at || new Date().toISOString(),
         updated_at: new Date().toISOString(),
       }));
@@ -231,6 +248,12 @@ export default function CalendarView({ isSidebarOpen, onOpenSidebar }: CalendarV
             is_completed: d.is_completed ?? false,
             is_task: d.is_task ?? false,
             recurrence_rule: d.recurrence_rule || null,
+            reminder_type: d.reminder_type || 'none',
+            reminder_custom_time: d.reminder_custom_time || null,
+            reminder_channel_email: d.reminder_channel_email ?? false,
+            reminder_email: d.reminder_email || null,
+            reminder_channel_telegram: d.reminder_channel_telegram ?? false,
+            reminder_telegram_chat_id: d.reminder_telegram_chat_id || null,
             created_at: d.created_at,
             updated_at: d.updated_at,
           }));
@@ -330,11 +353,18 @@ export default function CalendarView({ isSidebarOpen, onOpenSidebar }: CalendarV
 
   // ── Form & Modal Management ────────────────────────────────────
 
-  const openCreateModal = (presetDate?: string, presetHour?: number) => {
+  const openCreateModal = async (presetDate?: string, presetHour?: number) => {
     const baseDate = presetDate ? new Date(presetDate) : new Date(currentDate);
     const dateStr = toDateString(baseDate);
     const startH = presetHour !== undefined ? presetHour : 9;
     const endH = (startH + 1) % 24;
+
+    // Fetch user email if available
+    let defaultEmail = '';
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      if (session?.user?.email) defaultEmail = session.user.email;
+    } catch (e) {}
 
     setEditingEvent(null);
     setFormTitle('');
@@ -349,15 +379,32 @@ export default function CalendarView({ isSidebarOpen, onOpenSidebar }: CalendarV
     setFormLocationUrl('');
     setFormIsTask(false);
     setFormRecurrence('');
+    setFormReminderType('none');
+    setFormReminderCustomDate(dateStr);
+    setFormReminderCustomTime(`${String(Math.max(0, startH - 3)).padStart(2, '0')}:00`);
+    setFormReminderChannelEmail(true);
+    setFormReminderEmail(defaultEmail);
+    setFormReminderChannelTelegram(false);
+    setFormReminderTelegramChatId('');
+    setTestNotifyStatus('idle');
+    setTestNotifyMsg('');
     setIsEventModalOpen(true);
   };
 
-  const openEditModal = (evt: CalendarEvent) => {
+  const openEditModal = async (evt: CalendarEvent) => {
     setEditingEvent(evt);
     setFormTitle(evt.title);
 
     const startD = new Date(evt.start_time);
     const endD = new Date(evt.end_time);
+
+    let defaultEmail = evt.reminder_email || '';
+    if (!defaultEmail) {
+      try {
+        const { data: { session } } = await supabase.auth.getSession();
+        if (session?.user?.email) defaultEmail = session.user.email;
+      } catch (e) {}
+    }
 
     setFormStartDate(toDateString(startD));
     setFormEndDate(toDateString(endD));
@@ -370,7 +417,54 @@ export default function CalendarView({ isSidebarOpen, onOpenSidebar }: CalendarV
     setFormLocationUrl(evt.location_url || '');
     setFormIsTask(Boolean(evt.is_task));
     setFormRecurrence(evt.recurrence_rule || '');
+
+    setFormReminderType(evt.reminder_type || 'none');
+    if (evt.reminder_custom_time) {
+      const custD = new Date(evt.reminder_custom_time);
+      setFormReminderCustomDate(toDateString(custD));
+      setFormReminderCustomTime(toTimeString(custD));
+    } else {
+      setFormReminderCustomDate(toDateString(startD));
+      setFormReminderCustomTime(toTimeString(startD));
+    }
+    setFormReminderChannelEmail(evt.reminder_channel_email ?? true);
+    setFormReminderEmail(defaultEmail);
+    setFormReminderChannelTelegram(evt.reminder_channel_telegram ?? false);
+    setFormReminderTelegramChatId(evt.reminder_telegram_chat_id || '');
+    setTestNotifyStatus('idle');
+    setTestNotifyMsg('');
     setIsEventModalOpen(true);
+  };
+
+  const handleSendTestNotification = async () => {
+    setTestNotifyStatus('sending');
+    setTestNotifyMsg('');
+    try {
+      const res = await fetch('/api/calendar/notify', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          eventTitle: formTitle.trim() || 'Sample Calendar Event',
+          startTime: formIsAllDay ? `${formStartDate}T00:00:00` : `${formStartDate}T${formStartTime}:00`,
+          description: formDescription.trim() || 'This is a test notification from Nidus Calendar.',
+          channel: formReminderChannelEmail && formReminderChannelTelegram ? 'all' : formReminderChannelTelegram ? 'telegram' : 'email',
+          telegramChatId: formReminderTelegramChatId.trim(),
+          email: formReminderEmail.trim(),
+          reminderLabel: formReminderType === '3h' ? '3 hours before' : formReminderType === '1h' ? '1 hour before' : formReminderType === '30m' ? '30 minutes before' : formReminderType === 'custom' ? `At custom time: ${formReminderCustomDate} ${formReminderCustomTime}` : 'Event scheduled reminder',
+        }),
+      });
+      const data = await res.json();
+      if (data.success || data.results?.telegram?.ok || data.results?.email?.id) {
+        setTestNotifyStatus('sent');
+        setTestNotifyMsg('Test reminder dispatched successfully!');
+      } else {
+        setTestNotifyStatus('error');
+        setTestNotifyMsg(data.errors?.join(', ') || data.error || 'Failed to dispatch test reminder.');
+      }
+    } catch (err: any) {
+      setTestNotifyStatus('error');
+      setTestNotifyMsg(err.message || 'Error communicating with notification server.');
+    }
   };
 
   const handleSaveEvent = () => {
@@ -385,6 +479,11 @@ export default function CalendarView({ isSidebarOpen, onOpenSidebar }: CalendarV
     } else {
       startIso = new Date(`${formStartDate}T${formStartTime}:00`).toISOString();
       endIso = new Date(`${formEndDate || formStartDate}T${formEndTime}:00`).toISOString();
+    }
+
+    let customReminderIso: string | null = null;
+    if (formReminderType === 'custom' && formReminderCustomDate) {
+      customReminderIso = new Date(`${formReminderCustomDate}T${formReminderCustomTime || '09:00'}:00`).toISOString();
     }
 
     if (editingEvent) {
@@ -402,6 +501,12 @@ export default function CalendarView({ isSidebarOpen, onOpenSidebar }: CalendarV
               location_url: formLocationUrl.trim() || null,
               is_task: formIsTask,
               recurrence_rule: formRecurrence || null,
+              reminder_type: formReminderType,
+              reminder_custom_time: customReminderIso,
+              reminder_channel_email: formReminderChannelEmail,
+              reminder_email: formReminderEmail.trim() || null,
+              reminder_channel_telegram: formReminderChannelTelegram,
+              reminder_telegram_chat_id: formReminderTelegramChatId.trim() || null,
               updated_at: new Date().toISOString(),
             }
           : e
@@ -421,6 +526,12 @@ export default function CalendarView({ isSidebarOpen, onOpenSidebar }: CalendarV
         is_completed: false,
         is_task: formIsTask,
         recurrence_rule: formRecurrence || null,
+        reminder_type: formReminderType,
+        reminder_custom_time: customReminderIso,
+        reminder_channel_email: formReminderChannelEmail,
+        reminder_email: formReminderEmail.trim() || null,
+        reminder_channel_telegram: formReminderChannelTelegram,
+        reminder_telegram_chat_id: formReminderTelegramChatId.trim() || null,
         created_at: new Date().toISOString(),
         updated_at: new Date().toISOString(),
       };
@@ -998,6 +1109,9 @@ export default function CalendarView({ isSidebarOpen, onOpenSidebar }: CalendarV
                               </span>
                             )}
                             <span className="truncate flex-1">{evt.title}</span>
+                            {evt.reminder_type && evt.reminder_type !== 'none' && (
+                              <Bell className="w-2.5 h-2.5 shrink-0 text-[#ff6600]" />
+                            )}
                           </div>
                         );
                       })}
@@ -1108,7 +1222,10 @@ export default function CalendarView({ isSidebarOpen, onOpenSidebar }: CalendarV
                         >
                           <div className="font-bold truncate flex items-center gap-1.5">
                             <span className={`w-2 h-2 rounded-full shrink-0 ${colorCfg.badge}`} />
-                            <span className="truncate text-[11px] sm:text-xs">{evt.title}</span>
+                            <span className="truncate text-[11px] sm:text-xs flex-1">{evt.title}</span>
+                            {evt.reminder_type && evt.reminder_type !== 'none' && (
+                              <Bell className="w-2.5 h-2.5 shrink-0 text-[#ff6600]" />
+                            )}
                           </div>
                           <div className="text-[10px] opacity-80 font-mono truncate mt-0.5">
                             {formatTime12h(toTimeString(start))} – {formatTime12h(toTimeString(end))}
@@ -1193,7 +1310,12 @@ export default function CalendarView({ isSidebarOpen, onOpenSidebar }: CalendarV
                       } ${colorCfg.border} ${colorCfg.text}`}
                     >
                       <div className="font-extrabold flex items-center justify-between gap-3">
-                        <span className="truncate text-sm sm:text-base">{evt.title}</span>
+                        <div className="flex items-center gap-1.5 truncate">
+                          <span className="truncate text-sm sm:text-base">{evt.title}</span>
+                          {evt.reminder_type && evt.reminder_type !== 'none' && (
+                            <Bell className="w-3.5 h-3.5 shrink-0 text-[#ff6600]" />
+                          )}
+                        </div>
                         <span className="text-xs font-mono shrink-0 opacity-80 font-bold">
                           {formatTime12h(toTimeString(start))} – {formatTime12h(toTimeString(end))}
                         </span>
@@ -1295,6 +1417,12 @@ export default function CalendarView({ isSidebarOpen, onOpenSidebar }: CalendarV
                                     {evt.category && (
                                       <span className="px-2 py-0.5 bg-neutral-100 border border-neutral-200 text-neutral-600 rounded text-[10px] font-semibold">
                                         {evt.category}
+                                      </span>
+                                    )}
+                                    {evt.reminder_type && evt.reminder_type !== 'none' && (
+                                      <span className="inline-flex items-center gap-1 text-[10px] bg-orange-50 text-[#ff6600] border border-orange-200/80 px-1.5 py-0.2 rounded-full font-bold">
+                                        <Bell className="w-2.5 h-2.5" />
+                                        {evt.reminder_type === '3h' ? '3h before' : evt.reminder_type === '1h' ? '1h before' : evt.reminder_type === '30m' ? '30m before' : evt.reminder_type === 'at_event' ? 'At start' : 'Reminder'}
                                       </span>
                                     )}
                                     {evt.recurrence_rule && (
@@ -1578,6 +1706,144 @@ export default function CalendarView({ isSidebarOpen, onOpenSidebar }: CalendarV
                 placeholder="Add meeting URL (Google Meet, Zoom) or room..."
                 className="w-full text-xs bg-neutral-50 border border-neutral-200 rounded-lg px-3 py-2 outline-none focus:bg-white focus:ring-2 focus:ring-indigo-500/20 font-medium"
               />
+            </div>
+
+            {/* Reminder & Notification Channels */}
+            <div className="mb-4 bg-neutral-50 border border-neutral-200 rounded-xl p-3.5 flex flex-col gap-3">
+              <div className="flex items-center justify-between">
+                <label className="text-xs font-bold text-neutral-800 flex items-center gap-1.5">
+                  <Bell className="w-4 h-4 text-[#ff6600]" /> Remind When
+                </label>
+                <select
+                  value={formReminderType}
+                  onChange={(e) => setFormReminderType(e.target.value)}
+                  className="text-xs bg-white border border-neutral-200 rounded-lg px-3 py-1.5 outline-none font-bold text-neutral-800 cursor-pointer shadow-2xs"
+                >
+                  <option value="none">No reminder</option>
+                  <option value="at_event">At time of event (0 min)</option>
+                  <option value="15m">15 minutes before</option>
+                  <option value="30m">30 minutes before</option>
+                  <option value="1h">1 hour before</option>
+                  <option value="3h">3 hours before</option>
+                  <option value="1d">1 day before</option>
+                  <option value="custom">Specific custom time...</option>
+                </select>
+              </div>
+
+              {/* Custom Date & Time if selected */}
+              {formReminderType === 'custom' && (
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 pt-2 border-t border-neutral-200/70">
+                  <div>
+                    <label className="text-[11px] font-bold text-neutral-600 mb-1 block">Alert Date</label>
+                    <input
+                      type="date"
+                      value={formReminderCustomDate}
+                      onChange={(e) => setFormReminderCustomDate(e.target.value)}
+                      className="w-full text-xs font-semibold bg-white border border-neutral-200 rounded-lg px-3 py-1.5 outline-none"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-[11px] font-bold text-neutral-600 mb-1 block">Alert Time</label>
+                    <input
+                      type="time"
+                      value={formReminderCustomTime}
+                      onChange={(e) => setFormReminderCustomTime(e.target.value)}
+                      className="w-full text-xs font-mono font-bold bg-white border border-neutral-200 rounded-lg px-3 py-1.5 outline-none"
+                    />
+                  </div>
+                </div>
+              )}
+
+              {/* Notification Channels (Email & Telegram) */}
+              {formReminderType !== 'none' && (
+                <div className="flex flex-col gap-3 pt-2.5 border-t border-neutral-200/70">
+                  <span className="text-[10px] font-extrabold text-neutral-500 uppercase tracking-wider">
+                    Notification Channels (Email & Telegram)
+                  </span>
+
+                  {/* Email Channel */}
+                  <div className="flex flex-col gap-1.5">
+                    <label className="flex items-center gap-2 cursor-pointer select-none text-xs font-bold text-neutral-800">
+                      <input
+                        type="checkbox"
+                        checked={formReminderChannelEmail}
+                        onChange={(e) => setFormReminderChannelEmail(e.target.checked)}
+                        className="rounded border-neutral-300 text-indigo-600 focus:ring-indigo-500 w-4 h-4 cursor-pointer"
+                      />
+                      <span className="flex items-center gap-1.5">
+                        <Mail className="w-3.5 h-3.5 text-neutral-500" /> Send Email Notification
+                      </span>
+                    </label>
+                    {formReminderChannelEmail && (
+                      <input
+                        type="email"
+                        value={formReminderEmail}
+                        onChange={(e) => setFormReminderEmail(e.target.value)}
+                        placeholder="your-email@example.com"
+                        className="w-full text-xs bg-white border border-neutral-200 rounded-lg px-3 py-1.5 outline-none font-medium"
+                      />
+                    )}
+                  </div>
+
+                  {/* Telegram Channel */}
+                  <div className="flex flex-col gap-1.5">
+                    <label className="flex items-center gap-2 cursor-pointer select-none text-xs font-bold text-neutral-800">
+                      <input
+                        type="checkbox"
+                        checked={formReminderChannelTelegram}
+                        onChange={(e) => setFormReminderChannelTelegram(e.target.checked)}
+                        className="rounded border-neutral-300 text-indigo-600 focus:ring-indigo-500 w-4 h-4 cursor-pointer"
+                      />
+                      <span className="flex items-center gap-1.5">
+                        <Send className="w-3.5 h-3.5 text-sky-500" /> Send Telegram Bot Alert
+                      </span>
+                    </label>
+                    {formReminderChannelTelegram && (
+                      <div className="flex flex-col gap-1">
+                        <input
+                          type="text"
+                          value={formReminderTelegramChatId}
+                          onChange={(e) => setFormReminderTelegramChatId(e.target.value)}
+                          placeholder="Your Telegram Chat ID (e.g. 123456789)"
+                          className="w-full text-xs bg-white border border-neutral-200 rounded-lg px-3 py-1.5 outline-none font-medium"
+                        />
+                        <span className="text-[10px] text-neutral-400">
+                          Tip: Message <strong>@userinfobot</strong> on Telegram to instantly find your numeric Chat ID.
+                        </span>
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Test Dispatch Button */}
+                  <div className="flex items-center justify-between pt-1">
+                    <button
+                      type="button"
+                      onClick={handleSendTestNotification}
+                      disabled={testNotifyStatus === 'sending' || (!formReminderChannelEmail && !formReminderChannelTelegram)}
+                      className="px-3 py-1.5 text-xs font-bold bg-neutral-200/80 hover:bg-neutral-300 text-neutral-800 rounded-md cursor-pointer transition-colors flex items-center gap-1.5 disabled:opacity-40"
+                    >
+                      {testNotifyStatus === 'sending' ? (
+                        <RefreshCw className="w-3.5 h-3.5 animate-spin text-neutral-600" />
+                      ) : (
+                        <Send className="w-3.5 h-3.5 text-neutral-600" />
+                      )}
+                      <span>{testNotifyStatus === 'sending' ? 'Sending Test...' : 'Send Test Notification Now'}</span>
+                    </button>
+
+                    {testNotifyMsg && (
+                      <span
+                        className={`text-[10px] font-bold px-2 py-0.5 rounded ${
+                          testNotifyStatus === 'sent'
+                            ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
+                            : 'bg-red-50 text-red-700 border border-red-200'
+                        }`}
+                      >
+                        {testNotifyMsg}
+                      </span>
+                    )}
+                  </div>
+                </div>
+              )}
             </div>
 
             {/* Description Notes */}

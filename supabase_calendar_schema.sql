@@ -20,6 +20,12 @@ CREATE TABLE IF NOT EXISTS public.calendar_events (
   is_completed BOOLEAN DEFAULT false,
   is_task BOOLEAN DEFAULT false,
   recurrence_rule TEXT,
+  reminder_type TEXT DEFAULT 'none',
+  reminder_custom_time TIMESTAMPTZ,
+  reminder_channel_email BOOLEAN DEFAULT false,
+  reminder_email TEXT,
+  reminder_channel_telegram BOOLEAN DEFAULT false,
+  reminder_telegram_chat_id TEXT,
   created_at TIMESTAMPTZ DEFAULT timezone('utc'::text, now()) NOT NULL,
   updated_at TIMESTAMPTZ DEFAULT timezone('utc'::text, now()) NOT NULL
 );

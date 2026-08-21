@@ -77,6 +77,12 @@ export interface CalendarEvent {
   is_completed?: boolean; // For checkable tasks
   is_task?: boolean;      // Distinguishes tasks from events
   recurrence_rule?: string | null; // 'daily' | 'weekly' | 'monthly' | 'yearly' | null
+  reminder_type?: 'none' | 'at_event' | '15m' | '30m' | '1h' | '3h' | '1d' | 'custom' | string | null;
+  reminder_custom_time?: string | null;
+  reminder_channel_email?: boolean;
+  reminder_email?: string | null;
+  reminder_channel_telegram?: boolean;
+  reminder_telegram_chat_id?: string | null;
   created_at: string;
   updated_at: string;
 }
