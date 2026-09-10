@@ -2,6 +2,31 @@ import { NextResponse } from 'next/server';
 import { getLinkPreview } from 'link-preview-js';
 import dns from 'node:dns';
 
+function isPrivateIp(ip: string): boolean {
+  // IPv4 Loopback (127.0.0.0/8), Private (10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16), Link-local/Cloud Metadata (169.254.0.0/16), 0.0.0.0/8
+  if (/^(127\.|10\.|172\.(1[6-9]|2[0-9]|3[01])\.|192\.168\.|169\.254\.|0\.)/.test(ip)) return true;
+  // IPv6 Loopback (::1), Unique local (fc00::/7), Link-local (fe80::/10), IPv4-mapped
+  if (/^(::1|fc|fd|fe80|::ffff:127\.)/i.test(ip)) return true;
+  return false;
+}
+
+async function validatePublicHostname(hostname: string): Promise<boolean> {
+  const lower = hostname.toLowerCase().trim();
+  if (['localhost', '127.0.0.1', '0.0.0.0', '::1', 'metadata.google.internal', 'instance-data'].includes(lower)) {
+    return false;
+  }
+  return new Promise((resolve) => {
+    dns.lookup(hostname, { all: true }, (err, addresses) => {
+      if (err || !addresses || addresses.length === 0) {
+        resolve(false);
+        return;
+      }
+      const hasPrivate = addresses.some((a) => isPrivateIp(a.address));
+      resolve(!hasPrivate);
+    });
+  });
+}
+
 export async function POST(req: Request) {
   try {
     const { url } = await req.json();
@@ -12,14 +37,22 @@ export async function POST(req: Request) {
     // Basic URL validation
     let parsedUrl: URL;
     try {
-      // Prepend https:// if protocol is missing
       let normalizedUrl = url.trim();
       if (!/^https?:\/\//i.test(normalizedUrl)) {
         normalizedUrl = 'https://' + normalizedUrl;
       }
       parsedUrl = new URL(normalizedUrl);
+      if (parsedUrl.protocol !== 'http:' && parsedUrl.protocol !== 'https:') {
+        return NextResponse.json({ error: 'Only HTTP and HTTPS protocols are supported' }, { status: 400 });
+      }
     } catch {
       return NextResponse.json({ error: 'Invalid URL format' }, { status: 400 });
+    }
+
+    // SSRF Guard: Validate destination is not internal or cloud metadata
+    const isPublicHost = await validatePublicHostname(parsedUrl.hostname);
+    if (!isPublicHost) {
+      return NextResponse.json({ error: 'Invalid or restricted host address' }, { status: 400 });
     }
 
     const domain = parsedUrl.hostname.replace('www.', '');
@@ -342,6 +375,6 @@ export async function POST(req: Request) {
     }
   } catch (error: any) {
     console.error('API Error:', error);
-    return NextResponse.json({ error: error.message || 'Internal Server Error' }, { status: 500 });
+    return NextResponse.json({ error: 'Failed to extract link preview' }, { status: 500 });
   }
 }

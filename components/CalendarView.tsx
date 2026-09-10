@@ -77,6 +77,15 @@ function formatEventTimeRange(evt: CalendarEvent): string {
   return `${startStr} – ${endStr}`;
 }
 
+// Helper to sanitize external links and block javascript: / data: pseudo-protocols
+function sanitizeSafeUrl(url: string | null | undefined): string | null {
+  if (!url) return null;
+  const trimmed = url.trim();
+  if (/^https?:\/\//i.test(trimmed)) return trimmed;
+  if (/^[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/i.test(trimmed)) return `https://${trimmed}`;
+  return null;
+}
+
 const DEFAULT_SAMPLE_EVENTS: CalendarEvent[] = [
   {
     id: 'evt-welcome-1',
@@ -633,7 +642,7 @@ export default function CalendarView({ isSidebarOpen, onOpenSidebar }: CalendarV
               color: formColor,
               category: formCategory,
               description: formDescription.trim() || null,
-              location_url: formLocationUrl.trim() || null,
+              location_url: sanitizeSafeUrl(formLocationUrl),
               is_task: formIsTask,
               recurrence_rule: formRecurrence || null,
               reminder_type: formReminderType,
@@ -657,7 +666,7 @@ export default function CalendarView({ isSidebarOpen, onOpenSidebar }: CalendarV
         color: formColor,
         category: formCategory,
         description: formDescription.trim() || null,
-        location_url: formLocationUrl.trim() || null,
+        location_url: sanitizeSafeUrl(formLocationUrl),
         is_completed: false,
         is_task: formIsTask,
         recurrence_rule: formRecurrence || null,
@@ -804,7 +813,7 @@ export default function CalendarView({ isSidebarOpen, onOpenSidebar }: CalendarV
           id: generateId('evt'),
           title: summary,
           description: description || null,
-          location_url: location || null,
+          location_url: sanitizeSafeUrl(location),
           start_time: startD.toISOString(),
           end_time: endD.toISOString(),
           is_all_day: dtstart.length === 8,
@@ -1590,9 +1599,9 @@ export default function CalendarView({ isSidebarOpen, onOpenSidebar }: CalendarV
                                     </p>
                                   )}
 
-                                  {evt.location_url && (
+                                  {sanitizeSafeUrl(evt.location_url) && (
                                     <a
-                                      href={evt.location_url}
+                                      href={sanitizeSafeUrl(evt.location_url)!}
                                       target="_blank"
                                       rel="noopener noreferrer"
                                       onClick={(e) => e.stopPropagation()}
@@ -1814,9 +1823,9 @@ export default function CalendarView({ isSidebarOpen, onOpenSidebar }: CalendarV
                               </p>
                             )}
 
-                            {evt.location_url && (
+                            {sanitizeSafeUrl(evt.location_url) && (
                               <a
-                                href={evt.location_url}
+                                href={sanitizeSafeUrl(evt.location_url)!}
                                 target="_blank"
                                 rel="noopener noreferrer"
                                 onClick={(e) => e.stopPropagation()}
