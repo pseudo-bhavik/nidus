@@ -224,7 +224,7 @@ export default function LinkVault({
         color: sec.color || 'emerald',
         links: Array.isArray(sec.links) ? sec.links : [],
         subsections: Array.isArray(sec.subsections) ? sec.subsections : [],
-        is_collapsed: sec.is_collapsed ?? false,
+        is_collapsed: true, // Always store as collapsed; expand is transient UI state
         position: typeof sec.position === 'number' ? sec.position : idx,
         created_at: sec.created_at || new Date().toISOString(),
         updated_at: new Date().toISOString(),
@@ -283,7 +283,7 @@ export default function LinkVault({
               color: s.color || 'emerald',
               links: Array.isArray(s.links) ? s.links : [],
               subsections: Array.isArray(s.subsections) ? s.subsections.map(mapWithPinned) : [],
-              is_collapsed: s.is_collapsed ?? false,
+              is_collapsed: true, // Always start collapsed on mount; targetSectionId effect handles expanding specific ones
               is_pinned_to_bookmarks: pinnedIds.includes(s.id),
               position: typeof s.position === 'number' ? s.position : 0,
               created_at: s.created_at || new Date().toISOString(),
@@ -311,7 +311,14 @@ export default function LinkVault({
         if (saved && isMounted) {
           const parsed = JSON.parse(saved);
           if (Array.isArray(parsed) && parsed.length > 0) {
-            setSections(parsed);
+            // Always start collapsed on mount
+            const collapseAll = (list: VaultSection[]): VaultSection[] =>
+              list.map((sec) => ({
+                ...sec,
+                is_collapsed: true,
+                subsections: sec.subsections ? collapseAll(sec.subsections) : [],
+              }));
+            setSections(collapseAll(parsed));
             setIsLoaded(true);
             return;
           }
