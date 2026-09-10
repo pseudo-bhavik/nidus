@@ -36,6 +36,7 @@ const MONTH_NAMES = [
   'July', 'August', 'September', 'October', 'November', 'December'
 ];
 
+const HOURS_OF_DAY = Array.from({ length: 24 }, (_, i) => i);
 const DAY_NAMES_SHORT = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 
 // Helper to format Date to YYYY-MM-DD
@@ -62,6 +63,18 @@ function formatTime12h(timeStr: string): string {
   const ampm = h >= 12 ? 'PM' : 'AM';
   h = h % 12 || 12;
   return `${h}:${m} ${ampm}`;
+}
+
+// Helper to format clean event time range (handles events with no end time)
+function formatEventTimeRange(evt: CalendarEvent): string {
+  if (evt.is_all_day) return 'All day';
+  const startStr = formatTime12h(toTimeString(new Date(evt.start_time)));
+  if (!evt.end_time || evt.end_time === evt.start_time) {
+    return startStr;
+  }
+  const endStr = formatTime12h(toTimeString(new Date(evt.end_time!)));
+  if (startStr === endStr) return startStr;
+  return `${startStr} – ${endStr}`;
 }
 
 const DEFAULT_SAMPLE_EVENTS: CalendarEvent[] = [
@@ -136,6 +149,7 @@ export default function CalendarView({ isSidebarOpen, onOpenSidebar }: CalendarV
   const [formEndDate, setFormEndDate] = useState('');
   const [formStartTime, setFormStartTime] = useState('09:00');
   const [formEndTime, setFormEndTime] = useState('10:00');
+  const [formHasEndTime, setFormHasEndTime] = useState(true);
   const [formIsAllDay, setFormIsAllDay] = useState(false);
   const [formColor, setFormColor] = useState('orange');
   const [formCategory, setFormCategory] = useState('General');
@@ -464,9 +478,12 @@ export default function CalendarView({ isSidebarOpen, onOpenSidebar }: CalendarV
     try {
       defaultTg = localStorage.getItem('nidus_telegram_chat_id') || '';
       defaultEmail = localStorage.getItem('nidus_default_alert_email') || '';
-      if (!defaultEmail) {
-        const { data: { session } } = await supabase.auth.getSession();
-        if (session?.user?.email) defaultEmail = session.user.email;
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!defaultEmail && session?.user?.email) defaultEmail = session.user.email;
+      if (!defaultEmail && session?.user?.user_metadata?.default_alert_email) defaultEmail = session.user.user_metadata.default_alert_email;
+      if (!defaultTg && session?.user?.user_metadata?.telegram_chat_id) {
+        defaultTg = session.user.user_metadata.telegram_chat_id;
+        localStorage.setItem('nidus_telegram_chat_id', defaultTg);
       }
     } catch (e) {}
 
@@ -476,6 +493,7 @@ export default function CalendarView({ isSidebarOpen, onOpenSidebar }: CalendarV
     setFormEndDate(dateStr);
     setFormStartTime(`${String(startH).padStart(2, '0')}:00`);
     setFormEndTime(`${String(endH).padStart(2, '0')}:00`);
+    setFormHasEndTime(true);
     setFormIsAllDay(presetHour === undefined && viewMode === 'month');
     setFormColor('orange');
     setFormCategory('General');
@@ -500,16 +518,20 @@ export default function CalendarView({ isSidebarOpen, onOpenSidebar }: CalendarV
     setFormTitle(evt.title);
 
     const startD = new Date(evt.start_time);
-    const endD = new Date(evt.end_time);
+    const hasEnd = Boolean(evt.end_time && evt.end_time !== evt.start_time);
+    const endD = evt.end_time ? new Date(evt.end_time) : startD;
 
     let defaultEmail = evt.reminder_email || '';
     let defaultTg = evt.reminder_telegram_chat_id || '';
     try {
       if (!defaultTg) defaultTg = localStorage.getItem('nidus_telegram_chat_id') || '';
       if (!defaultEmail) defaultEmail = localStorage.getItem('nidus_default_alert_email') || '';
-      if (!defaultEmail) {
-        const { data: { session } } = await supabase.auth.getSession();
-        if (session?.user?.email) defaultEmail = session.user.email;
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!defaultEmail && session?.user?.email) defaultEmail = session.user.email;
+      if (!defaultEmail && session?.user?.user_metadata?.default_alert_email) defaultEmail = session.user.user_metadata.default_alert_email;
+      if (!defaultTg && session?.user?.user_metadata?.telegram_chat_id) {
+        defaultTg = session.user.user_metadata.telegram_chat_id;
+        localStorage.setItem('nidus_telegram_chat_id', defaultTg);
       }
     } catch (e) {}
 
@@ -517,6 +539,7 @@ export default function CalendarView({ isSidebarOpen, onOpenSidebar }: CalendarV
     setFormEndDate(toDateString(endD));
     setFormStartTime(toTimeString(startD));
     setFormEndTime(toTimeString(endD));
+    setFormHasEndTime(hasEnd);
     setFormIsAllDay(evt.is_all_day);
     setFormColor(evt.color || 'orange');
     setFormCategory(evt.category || 'General');
@@ -583,10 +606,10 @@ export default function CalendarView({ isSidebarOpen, onOpenSidebar }: CalendarV
 
     if (formIsAllDay) {
       startIso = new Date(`${formStartDate}T00:00:00`).toISOString();
-      endIso = new Date(`${formEndDate || formStartDate}T23:59:59`).toISOString();
+      endIso = formHasEndTime ? new Date(`${formEndDate || formStartDate}T23:59:59`).toISOString() : startIso;
     } else {
       startIso = new Date(`${formStartDate}T${formStartTime}:00`).toISOString();
-      endIso = new Date(`${formEndDate || formStartDate}T${formEndTime}:00`).toISOString();
+      endIso = formHasEndTime ? new Date(`${formEndDate || formStartDate}T${formEndTime}:00`).toISOString() : startIso;
     }
 
     let customReminderIso: string | null = null;
@@ -683,7 +706,7 @@ export default function CalendarView({ isSidebarOpen, onOpenSidebar }: CalendarV
 
     events.forEach((evt) => {
       const startD = new Date(evt.start_time);
-      const endD = new Date(evt.end_time);
+      const endD = evt.end_time ? new Date(evt.end_time) : startD;
 
       const formatIcsDate = (d: Date) =>
         d.toISOString().replace(/[-:]/g, '').split('.')[0] + 'Z';
@@ -1070,7 +1093,7 @@ export default function CalendarView({ isSidebarOpen, onOpenSidebar }: CalendarV
         {/* Header Right Actions */}
         <div className="flex items-center gap-3 flex-wrap">
           {/* View Mode Switcher (Clean, Spacious & Readable) */}
-          <div className="flex items-center bg-neutral-100/90 p-1 rounded-lg border border-neutral-200 text-xs font-bold text-neutral-600 gap-0.5 shadow-2xs">
+          <div className="flex items-center bg-neutral-100/90 p-1 rounded-lg border border-neutral-200 text-xs font-bold text-neutral-600 gap-0.5 shadow-2xs max-sm:overflow-x-auto max-sm:no-scrollbar max-sm:max-w-full">
             {[
               { id: 'month', label: 'Month', key: 'm' },
               { id: 'week', label: 'Week', key: 'w' },
@@ -1082,7 +1105,7 @@ export default function CalendarView({ isSidebarOpen, onOpenSidebar }: CalendarV
                 key={tab.id}
                 type="button"
                 onClick={() => setViewMode(tab.id as CalendarViewMode)}
-                className={`px-3.5 py-1.5 rounded-md text-xs font-bold transition-all cursor-pointer ${
+                className={`px-3.5 py-1.5 rounded-md text-xs font-bold transition-all cursor-pointer whitespace-nowrap ${
                   viewMode === tab.id
                     ? 'bg-white text-neutral-900 shadow-xs ring-1 ring-black/5 font-extrabold'
                     : 'hover:bg-neutral-200/60 hover:text-neutral-900 text-neutral-600'
@@ -1195,7 +1218,7 @@ export default function CalendarView({ isSidebarOpen, onOpenSidebar }: CalendarV
                             className={`px-2 py-1 rounded-md text-[11px] font-semibold border flex items-center gap-1.5 truncate shadow-2xs hover:opacity-85 cursor-pointer transition-all ${
                               colorCfg.bg
                             } ${colorCfg.border} ${colorCfg.text} ${isDone ? 'line-through opacity-50' : ''}`}
-                            title={`${evt.title} (${evt.is_all_day ? 'All day' : formatTime12h(toTimeString(new Date(evt.start_time)))})`}
+                            title={`${evt.title} (${formatEventTimeRange(evt)})`}
                           >
                             {isTask ? (
                               <button
@@ -1248,103 +1271,114 @@ export default function CalendarView({ isSidebarOpen, onOpenSidebar }: CalendarV
 
         {/* ── VIEW 2: WEEK VIEW (w) ── */}
         {viewMode === 'week' && (
-          <div className="flex-1 flex flex-col h-full overflow-y-auto bg-white">
-            {/* Week Header Row */}
-            <div className="grid grid-cols-8 border-b border-neutral-200 bg-neutral-50/90 sticky top-0 z-10 select-none">
-              <div className="py-2.5 text-center text-xs font-bold text-neutral-400 border-r border-neutral-200">
-                GMT
-              </div>
-              {weekDays.map((d) => (
-                <div
-                  key={d.dateStr}
-                  onClick={() => openCreateModal(d.dateStr)}
-                  className={`py-2.5 text-center border-r border-neutral-200 cursor-pointer hover:bg-neutral-100/70 transition-colors ${
-                    d.isToday ? 'bg-orange-50/50' : ''
-                  }`}
-                >
-                  <div className="text-[11px] font-extrabold text-neutral-500 uppercase">{d.dayName}</div>
+          <div className="flex-1 flex flex-col h-full overflow-y-auto overflow-x-auto bg-white">
+            <div className="min-w-full sm:min-w-0 max-sm:min-w-[640px] flex-1 flex flex-col">
+              {/* Week Header Row */}
+              <div className="grid grid-cols-8 border-b border-neutral-200 bg-neutral-50/90 sticky top-0 z-10 select-none">
+                <div className="py-2.5 text-center text-xs font-bold text-neutral-400 border-r border-neutral-200">
+                  GMT
+                </div>
+                {weekDays.map((d) => (
                   <div
-                    className={`text-sm font-extrabold w-7 h-7 mx-auto rounded-full flex items-center justify-center mt-0.5 ${
-                      d.isToday ? 'bg-[#ff6600] text-white shadow-xs' : 'text-neutral-900'
+                    key={d.dateStr}
+                    onClick={() => openCreateModal(d.dateStr)}
+                    className={`py-2.5 text-center border-r border-neutral-200 cursor-pointer hover:bg-neutral-100/70 transition-colors ${
+                      d.isToday ? 'bg-orange-50/50' : ''
                     }`}
                   >
-                    {d.dayNum}
-                  </div>
-                </div>
-              ))}
-            </div>
-
-            {/* 24-Hour Time Grid */}
-            <div className="flex-1 grid grid-cols-8 divide-x divide-neutral-200 relative">
-              {/* Hour Labels Column */}
-              <div className="flex flex-col text-[11px] font-mono text-neutral-500 text-right pr-2.5 py-1 select-none bg-neutral-50/40">
-                {Array.from({ length: 24 }).map((_, h) => (
-                  <div key={h} className="h-16 border-b border-neutral-150 flex items-start justify-end pt-1.5 font-semibold">
-                    {formatTime12h(`${String(h).padStart(2, '0')}:00`)}
+                    <div className="text-[11px] font-extrabold text-neutral-500 uppercase">{d.dayName}</div>
+                    <div
+                      className={`text-sm font-extrabold w-7 h-7 mx-auto rounded-full flex items-center justify-center mt-0.5 ${
+                        d.isToday ? 'bg-[#ff6600] text-white shadow-xs' : 'text-neutral-900'
+                      }`}
+                    >
+                      {d.dayNum}
+                    </div>
                   </div>
                 ))}
               </div>
 
-              {/* 7 Day Hourly Columns */}
-              {weekDays.map((d) => {
-                const dayEvts = eventsByDate[d.dateStr] || [];
+              {/* 24-Hour Time Grid */}
+              <div className="flex-1 grid grid-cols-8 divide-x divide-neutral-200 relative">
+                {/* Hour Labels Column */}
+                <div className="flex flex-col text-[11px] font-mono text-neutral-500 text-right pr-2.5 py-1 select-none bg-neutral-50/40">
+                  {HOURS_OF_DAY.map((h) => (
+                    <div key={h} className="h-14 -mt-2.5">
+                      {formatTime12h(`${String(h).padStart(2, '0')}:00`)}
+                    </div>
+                  ))}
+                </div>
 
-                return (
-                  <div key={d.dateStr} className="flex flex-col relative min-h-[1536px]">
-                    {/* Hour Slot Click Zones */}
-                    {Array.from({ length: 24 }).map((_, h) => (
-                      <div
-                        key={h}
-                        onClick={() => openCreateModal(d.dateStr, h)}
-                        className="h-16 border-b border-neutral-150 hover:bg-indigo-50/25 cursor-pointer transition-colors"
-                      />
-                    ))}
-
-                    {/* Positioned Events */}
-                    {dayEvts.map((evt) => {
-                      const colorCfg = getColorConfig(evt.color);
-                      const start = new Date(evt.start_time);
-                      const end = new Date(evt.end_time);
-
-                      const startMinutes = start.getHours() * 60 + start.getMinutes();
-                      const endMinutes = end.getHours() * 60 + end.getMinutes();
-                      const durationMinutes = Math.max(30, endMinutes - startMinutes || 60);
-
-                      const topPercent = (startMinutes / 1440) * 100;
-                      const heightPercent = (durationMinutes / 1440) * 100;
-
-                      return (
+                {/* 7 Columns for Days of the Week */}
+                {weekDays.map((d) => {
+                  const dayEvents = eventsByDate[d.dateStr] || [];
+                  return (
+                    <div
+                      key={d.dateStr}
+                      onClick={() => openCreateModal(d.dateStr)}
+                      className={`relative flex flex-col transition-colors cursor-pointer ${
+                        d.isToday ? 'bg-orange-50/20' : 'hover:bg-neutral-50/60'
+                      }`}
+                      style={{ height: '1344px' }} // 24 hours * 56px per hour
+                    >
+                      {/* Grid hour line dividers */}
+                      {HOURS_OF_DAY.map((h) => (
                         <div
-                          key={evt.id}
+                          key={h}
+                          className="h-14 border-b border-neutral-100/80 hover:bg-black/2 transition-colors"
                           onClick={(e) => {
                             e.stopPropagation();
-                            openEditModal(evt);
+                            openCreateModal(d.dateStr, h);
                           }}
-                          style={{
-                            top: `${topPercent}%`,
-                            height: `${heightPercent}%`,
-                            minHeight: '32px',
-                          }}
-                          className={`absolute left-1 right-1 rounded-md p-1.5 text-xs border shadow-xs overflow-hidden cursor-pointer hover:ring-2 hover:ring-indigo-400/50 transition-all ${
-                            colorCfg.bg
-                          } ${colorCfg.border} ${colorCfg.text}`}
-                        >
-                          <div className="font-bold truncate flex items-center gap-1.5">
-                            <span className={`w-2 h-2 rounded-full shrink-0 ${colorCfg.badge}`} />
-                            <span className="truncate text-[11px] sm:text-xs flex-1">{evt.title}</span>
-                            {evt.reminder_type && evt.reminder_type !== 'none' && (
-                              <Bell className="w-2.5 h-2.5 shrink-0 text-[#ff6600]" />
-                            )}
+                        />
+                      ))}
+
+                      {/* Render Events within this day column */}
+                      {dayEvents.map((evt) => {
+                        const start = new Date(evt.start_time);
+                        const end = evt.end_time ? new Date(evt.end_time) : start;
+                        const colorCfg = getColorConfig(evt.color);
+
+                        const startMinutes = start.getHours() * 60 + start.getMinutes();
+                        let durationMinutes = (end.getTime() - start.getTime()) / (1000 * 60);
+                        if (durationMinutes <= 0) durationMinutes = 45;
+
+                        const topPercent = (startMinutes / 1440) * 100;
+                        const heightPercent = (durationMinutes / 1440) * 100;
+
+                        return (
+                          <div
+                            key={evt.id}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              openEditModal(evt);
+                            }}
+                            style={{
+                              top: `${topPercent}%`,
+                              height: `${heightPercent}%`,
+                              minHeight: '32px',
+                            }}
+                            className={`absolute left-1 right-1 rounded-md p-1.5 text-xs border shadow-xs overflow-hidden cursor-pointer hover:ring-2 hover:ring-indigo-400/50 transition-all ${
+                              colorCfg.bg
+                            } ${colorCfg.border} ${colorCfg.text}`}
+                          >
+                            <div className="font-bold truncate flex items-center gap-1.5">
+                              <span className={`w-2 h-2 rounded-full shrink-0 ${colorCfg.badge}`} />
+                              <span className="truncate text-[11px] sm:text-xs flex-1">{evt.title}</span>
+                              {evt.reminder_type && evt.reminder_type !== 'none' && (
+                                <Bell className="w-2.5 h-2.5 shrink-0 text-[#ff6600]" />
+                              )}
+                            </div>
+                            <div className="text-[10px] opacity-80 font-mono truncate mt-0.5">
+                              {formatEventTimeRange(evt)}
+                            </div>
                           </div>
-                          <div className="text-[10px] opacity-80 font-mono truncate mt-0.5">
-                            {formatTime12h(toTimeString(start))} – {formatTime12h(toTimeString(end))}
-                          </div>
-                        </div>
-                      );
-                    })}
-                  </div>
-                );
-              })}
+                        );
+                      })}
+                    </div>
+                  );
+                })}
+              </div>
             </div>
           </div>
         )}
@@ -1393,7 +1427,7 @@ export default function CalendarView({ isSidebarOpen, onOpenSidebar }: CalendarV
                 {(eventsByDate[toDateString(currentDate)] || []).map((evt) => {
                   const colorCfg = getColorConfig(evt.color);
                   const start = new Date(evt.start_time);
-                  const end = new Date(evt.end_time);
+                  const end = evt.end_time ? new Date(evt.end_time) : start;
 
                   const startMinutes = start.getHours() * 60 + start.getMinutes();
                   const endMinutes = end.getHours() * 60 + end.getMinutes();
@@ -1426,7 +1460,7 @@ export default function CalendarView({ isSidebarOpen, onOpenSidebar }: CalendarV
                           )}
                         </div>
                         <span className="text-xs font-mono shrink-0 opacity-80 font-bold">
-                          {formatTime12h(toTimeString(start))} – {formatTime12h(toTimeString(end))}
+                          {formatEventTimeRange(evt)}
                         </span>
                       </div>
                       {evt.description && (
@@ -1543,14 +1577,7 @@ export default function CalendarView({ isSidebarOpen, onOpenSidebar }: CalendarV
                                   </div>
 
                                   <div className="text-xs text-neutral-500 font-mono mt-1">
-                                    {evt.is_all_day ? (
-                                      'All-day'
-                                    ) : (
-                                      <>
-                                        {formatTime12h(toTimeString(new Date(evt.start_time)))} –{' '}
-                                        {formatTime12h(toTimeString(new Date(evt.end_time)))}
-                                      </>
-                                    )}
+                                    {formatEventTimeRange(evt)}
                                   </div>
 
                                   {evt.description && (
@@ -1774,11 +1801,7 @@ export default function CalendarView({ isSidebarOpen, onOpenSidebar }: CalendarV
                             </div>
 
                             <div className="text-[11px] font-mono font-semibold text-neutral-600 mt-1">
-                              {evt.is_all_day ? (
-                                'All Day Event'
-                              ) : (
-                                `${formatTime12h(toTimeString(new Date(evt.start_time)))} – ${formatTime12h(toTimeString(new Date(evt.end_time)))}`
-                              )}
+                              {formatEventTimeRange(evt)}
                             </div>
 
                             {evt.description && (
@@ -1915,41 +1938,68 @@ export default function CalendarView({ isSidebarOpen, onOpenSidebar }: CalendarV
             </div>
 
             {/* Date Pickers */}
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-3">
+            <div className={`grid ${formHasEndTime ? 'grid-cols-1 sm:grid-cols-2' : 'grid-cols-1'} gap-3 mb-3`}>
               <div>
                 <label className="text-xs font-bold text-neutral-700 mb-1.5 block">Start Date</label>
                 <input
                   type="date"
                   value={formStartDate}
-                  onChange={(e) => setFormStartDate(e.target.value)}
+                  onChange={(e) => {
+                    setFormStartDate(e.target.value);
+                    if (!formEndDate || formEndDate < e.target.value) {
+                      setFormEndDate(e.target.value);
+                    }
+                  }}
                   className="w-full text-xs font-semibold bg-neutral-50 border border-neutral-200 rounded-lg px-3 py-2 outline-none focus:bg-white focus:ring-2 focus:ring-indigo-500/20"
                 />
               </div>
-              <div>
-                <label className="text-xs font-bold text-neutral-700 mb-1.5 block">End Date</label>
-                <input
-                  type="date"
-                  value={formEndDate}
-                  onChange={(e) => setFormEndDate(e.target.value)}
-                  className="w-full text-xs font-semibold bg-neutral-50 border border-neutral-200 rounded-lg px-3 py-2 outline-none focus:bg-white focus:ring-2 focus:ring-indigo-500/20"
-                />
-              </div>
+              {formHasEndTime && (
+                <div>
+                  <label className="text-xs font-bold text-neutral-700 mb-1.5 block">End Date</label>
+                  <input
+                    type="date"
+                    value={formEndDate}
+                    onChange={(e) => setFormEndDate(e.target.value)}
+                    className="w-full text-xs font-semibold bg-neutral-50 border border-neutral-200 rounded-lg px-3 py-2 outline-none focus:bg-white focus:ring-2 focus:ring-indigo-500/20"
+                  />
+                </div>
+              )}
             </div>
 
-            {/* All Day Toggle & Recurrence */}
-            <div className="flex items-center justify-between mb-3 bg-neutral-50 border border-neutral-200 rounded-lg px-3.5 py-2 text-xs font-semibold">
-              <label className="flex items-center gap-2 cursor-pointer select-none">
-                <input
-                  type="checkbox"
-                  checked={formIsAllDay}
-                  onChange={(e) => setFormIsAllDay(e.target.checked)}
-                  className="rounded border-neutral-300 text-indigo-600 focus:ring-indigo-500 w-4 h-4 cursor-pointer"
-                />
-                <span className="text-neutral-800 font-bold">All-day event</span>
-              </label>
+            {/* End Time & All-Day Options Bar */}
+            <div className="flex flex-wrap items-center justify-between gap-2.5 mb-3 bg-neutral-50 border border-neutral-200 rounded-lg px-3.5 py-2 text-xs font-semibold">
+              <div className="flex items-center gap-4 flex-wrap">
+                {/* Checkbox to add End Time */}
+                <label className="flex items-center gap-2 cursor-pointer select-none">
+                  <input
+                    type="checkbox"
+                    checked={formHasEndTime}
+                    onChange={(e) => {
+                      const checked = e.target.checked;
+                      setFormHasEndTime(checked);
+                      if (checked && !formEndDate) {
+                        setFormEndDate(formStartDate);
+                      }
+                    }}
+                    className="rounded border-neutral-300 text-indigo-600 focus:ring-indigo-500 w-4 h-4 cursor-pointer"
+                  />
+                  <span className="text-neutral-800 font-bold">Has end time / duration</span>
+                </label>
+
+                {/* All Day Toggle */}
+                <label className="flex items-center gap-2 cursor-pointer select-none">
+                  <input
+                    type="checkbox"
+                    checked={formIsAllDay}
+                    onChange={(e) => setFormIsAllDay(e.target.checked)}
+                    className="rounded border-neutral-300 text-indigo-600 focus:ring-indigo-500 w-4 h-4 cursor-pointer"
+                  />
+                  <span className="text-neutral-700 font-bold">All day</span>
+                </label>
+              </div>
 
               {/* Recurrence Dropdown */}
-              <div className="flex items-center gap-2">
+              <div className="flex items-center gap-1.5">
                 <Repeat className="w-3.5 h-3.5 text-neutral-500" />
                 <select
                   value={formRecurrence}
@@ -1967,7 +2017,7 @@ export default function CalendarView({ isSidebarOpen, onOpenSidebar }: CalendarV
 
             {/* Time Pickers (if not all day) */}
             {!formIsAllDay && (
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-3">
+              <div className={`grid ${formHasEndTime ? 'grid-cols-1 sm:grid-cols-2' : 'grid-cols-1'} gap-3 mb-3`}>
                 <div>
                   <label className="text-xs font-bold text-neutral-700 mb-1.5 block">Start Time</label>
                   <input
@@ -1977,15 +2027,17 @@ export default function CalendarView({ isSidebarOpen, onOpenSidebar }: CalendarV
                     className="w-full text-xs font-mono font-bold bg-neutral-50 border border-neutral-200 rounded-lg px-3 py-2 outline-none focus:bg-white focus:ring-2 focus:ring-indigo-500/20"
                   />
                 </div>
-                <div>
-                  <label className="text-xs font-bold text-neutral-700 mb-1.5 block">End Time</label>
-                  <input
-                    type="time"
-                    value={formEndTime}
-                    onChange={(e) => setFormEndTime(e.target.value)}
-                    className="w-full text-xs font-mono font-bold bg-neutral-50 border border-neutral-200 rounded-lg px-3 py-2 outline-none focus:bg-white focus:ring-2 focus:ring-indigo-500/20"
-                  />
-                </div>
+                {formHasEndTime && (
+                  <div>
+                    <label className="text-xs font-bold text-neutral-700 mb-1.5 block">End Time</label>
+                    <input
+                      type="time"
+                      value={formEndTime}
+                      onChange={(e) => setFormEndTime(e.target.value)}
+                      className="w-full text-xs font-mono font-bold bg-neutral-50 border border-neutral-200 rounded-lg px-3 py-2 outline-none focus:bg-white focus:ring-2 focus:ring-indigo-500/20"
+                    />
+                  </div>
+                )}
               </div>
             )}
 
@@ -2117,7 +2169,14 @@ export default function CalendarView({ isSidebarOpen, onOpenSidebar }: CalendarV
                       <input
                         type="checkbox"
                         checked={formReminderChannelTelegram}
-                        onChange={(e) => setFormReminderChannelTelegram(e.target.checked)}
+                        onChange={(e) => {
+                          const checked = e.target.checked;
+                          setFormReminderChannelTelegram(checked);
+                          if (checked && !formReminderTelegramChatId) {
+                            const savedTg = localStorage.getItem('nidus_telegram_chat_id') || '';
+                            if (savedTg) setFormReminderTelegramChatId(savedTg);
+                          }
+                        }}
                         className="rounded border-neutral-300 text-indigo-600 focus:ring-indigo-500 w-4 h-4 cursor-pointer"
                       />
                       <span className="flex items-center gap-1.5">

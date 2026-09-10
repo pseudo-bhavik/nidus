@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { X, BookOpen, User, Keyboard, CheckCircle, Database, HelpCircle, Palette, Bell, Send, Mail, RefreshCw } from 'lucide-react';
+import { supabase } from '../lib/supabase';
 
 interface SettingsModalProps {
   isOpen: boolean;
@@ -53,16 +54,45 @@ export default function SettingsModal({
 
   useEffect(() => {
     if (isOpen) {
-      const savedTg = localStorage.getItem('nidus_telegram_chat_id') || '';
-      const savedEmail = localStorage.getItem('nidus_default_alert_email') || userEmail || '';
+      let savedTg = localStorage.getItem('nidus_telegram_chat_id') || '';
+      let savedEmail = localStorage.getItem('nidus_default_alert_email') || userEmail || '';
+
+      // Check Supabase user metadata for cloud persistence across devices
+      supabase.auth.getUser().then(({ data: { user } }) => {
+        if (user) {
+          if (!savedTg && user.user_metadata?.telegram_chat_id) {
+            savedTg = user.user_metadata.telegram_chat_id;
+            setTelegramChatId(savedTg);
+            localStorage.setItem('nidus_telegram_chat_id', savedTg);
+          }
+          if (!savedEmail && user.user_metadata?.default_alert_email) {
+            savedEmail = user.user_metadata.default_alert_email;
+            setAlertEmail(savedEmail);
+            localStorage.setItem('nidus_default_alert_email', savedEmail);
+          }
+        }
+      }).catch(() => {});
+
       setTelegramChatId(savedTg);
       setAlertEmail(savedEmail);
     }
   }, [isOpen, userEmail]);
 
-  const handleSaveNotificationSettings = () => {
-    localStorage.setItem('nidus_telegram_chat_id', telegramChatId.trim());
-    localStorage.setItem('nidus_default_alert_email', alertEmail.trim());
+  const handleSaveNotificationSettings = async () => {
+    const cleanTg = telegramChatId.trim();
+    const cleanEmail = alertEmail.trim();
+    localStorage.setItem('nidus_telegram_chat_id', cleanTg);
+    localStorage.setItem('nidus_default_alert_email', cleanEmail);
+
+    try {
+      await supabase.auth.updateUser({
+        data: {
+          telegram_chat_id: cleanTg,
+          default_alert_email: cleanEmail,
+        },
+      });
+    } catch (err) {}
+
     setIsSavedNotify(true);
     setTimeout(() => setIsSavedNotify(false), 2500);
   };
@@ -617,7 +647,10 @@ export default function SettingsModal({
                     <input
                       type="text"
                       value={telegramChatId}
-                      onChange={(e) => setTelegramChatId(e.target.value)}
+                      onChange={(e) => {
+                        setTelegramChatId(e.target.value);
+                        localStorage.setItem('nidus_telegram_chat_id', e.target.value.trim());
+                      }}
                       placeholder="e.g. 123456789"
                       className="w-full bg-white border border-neutral-300 rounded-lg px-3 py-2 text-xs font-mono font-bold text-neutral-800 outline-none focus:ring-2 focus:ring-indigo-500/20"
                     />
@@ -636,7 +669,10 @@ export default function SettingsModal({
                     <input
                       type="email"
                       value={alertEmail}
-                      onChange={(e) => setAlertEmail(e.target.value)}
+                      onChange={(e) => {
+                        setAlertEmail(e.target.value);
+                        localStorage.setItem('nidus_default_alert_email', e.target.value.trim());
+                      }}
                       placeholder="your-email@example.com"
                       className="w-full bg-white border border-neutral-300 rounded-lg px-3 py-2 text-xs font-medium text-neutral-800 outline-none focus:ring-2 focus:ring-indigo-500/20"
                     />

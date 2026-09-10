@@ -56,6 +56,7 @@ export interface VaultSection {
   links: VaultLink[];
   subsections?: VaultSection[];
   is_collapsed: boolean;
+  is_pinned_to_bookmarks?: boolean;
   position: number;
   created_at: string;
   updated_at: string;
@@ -70,7 +71,7 @@ export interface CalendarEvent {
   description?: string | null;
   location_url?: string | null;
   start_time: string; // ISO timestamp
-  end_time: string;   // ISO timestamp
+  end_time?: string | null; // ISO timestamp (optional)
   is_all_day: boolean;
   color: string; // 'emerald' | 'blue' | 'purple' | 'amber' | 'rose' | 'cyan' | 'orange' | 'neutral'
   category?: string;
@@ -79,6 +80,7 @@ export interface CalendarEvent {
   recurrence_rule?: string | null; // 'daily' | 'weekly' | 'monthly' | 'yearly' | null
   reminder_type?: 'none' | 'at_event' | '15m' | '30m' | '1h' | '3h' | '1d' | 'custom' | string | null;
   reminder_custom_time?: string | null;
+  reminder_on_end?: boolean;
   reminder_channel_email?: boolean;
   reminder_email?: string | null;
   reminder_channel_telegram?: boolean;

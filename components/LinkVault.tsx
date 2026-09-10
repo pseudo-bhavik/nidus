@@ -6,7 +6,7 @@ import {
   ExternalLink, Copy, Check, Trash2, Edit2, GripVertical,
   Link as LinkIcon, ClipboardPaste, MoreHorizontal, RefreshCw, Clock, Globe,
   Upload, Download, FileText, CheckCircle, CheckCircle2, AlertTriangle, Folder, FolderOpen, FolderPlus,
-  CheckSquare, Square, Edit3, Trash, Cloud, CloudUpload, Database
+  CheckSquare, Square, Edit3, Trash, Cloud, CloudUpload, Database, Pin
 } from 'lucide-react';
 import { VaultSection, VaultLink } from '../lib/types';
 import { supabase } from '../lib/supabase';
@@ -82,6 +82,8 @@ interface ScrapedMetadata {
 interface LinkVaultProps {
   isSidebarOpen?: boolean;
   onOpenSidebar?: () => void;
+  targetSectionId?: string | null;
+  onClearTargetSectionId?: () => void;
 }
 
 interface RightClickMenuState {
@@ -93,13 +95,57 @@ interface RightClickMenuState {
   section?: VaultSection;
 }
 
-export default function LinkVault({ isSidebarOpen, onOpenSidebar }: LinkVaultProps) {
+export default function LinkVault({
+  isSidebarOpen,
+  onOpenSidebar,
+  targetSectionId,
+  onClearTargetSectionId,
+}: LinkVaultProps) {
   const [sections, setSections] = useState<VaultSection[]>([]);
   const [isLoaded, setIsLoaded] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [copiedLinkId, setCopiedLinkId] = useState<string | null>(null);
   const [scrapingLinkIds, setScrapingLinkIds] = useState<Set<string>>(new Set());
   const [scrapingProgress, setScrapingProgress] = useState<{ current: number; total: number } | null>(null);
+
+  // Auto-scroll and highlight when targetSectionId is passed from All Bookmarks
+  useEffect(() => {
+    if (targetSectionId && isLoaded && sections.length > 0) {
+      // 1. Expand section and all its ancestor sections if collapsed
+      setSections((prev) => {
+        const expandSectionTree = (list: VaultSection[]): VaultSection[] => {
+          return list.map((sec) => {
+            let matchesOrContains = sec.id === targetSectionId;
+            let updatedSubs: VaultSection[] | undefined = undefined;
+            if (sec.subsections && sec.subsections.length > 0) {
+              updatedSubs = expandSectionTree(sec.subsections);
+              if (updatedSubs.some((sub) => sub.id === targetSectionId || !sub.is_collapsed)) {
+                matchesOrContains = true;
+              }
+            }
+            if (matchesOrContains) {
+              return { ...sec, is_collapsed: false, subsections: updatedSubs || sec.subsections };
+            }
+            return sec;
+          });
+        };
+        return expandSectionTree(prev);
+      });
+
+      // 2. Scroll into view and highlight smoothly
+      setTimeout(() => {
+        const el = document.getElementById(`vault-section-${targetSectionId}`);
+        if (el) {
+          el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+          el.classList.add('ring-4', 'ring-[#ff6600]', 'ring-offset-2', 'transition-all');
+          setTimeout(() => {
+            el.classList.remove('ring-4', 'ring-[#ff6600]', 'ring-offset-2');
+          }, 2500);
+        }
+        onClearTargetSectionId?.();
+      }, 250);
+    }
+  }, [targetSectionId, isLoaded, sections.length]);
 
   // Bulk Selection States
   const [selectedLinkIds, setSelectedLinkIds] = useState<Set<string>>(new Set());
@@ -222,6 +268,7 @@ export default function LinkVault({ isSidebarOpen, onOpenSidebar }: LinkVaultPro
               links: Array.isArray(s.links) ? s.links : [],
               subsections: Array.isArray(s.subsections) ? s.subsections : [],
               is_collapsed: s.is_collapsed ?? false,
+              is_pinned_to_bookmarks: s.is_pinned_to_bookmarks ?? false,
               position: typeof s.position === 'number' ? s.position : 0,
               created_at: s.created_at || new Date().toISOString(),
               updated_at: s.updated_at || new Date().toISOString(),
@@ -231,6 +278,8 @@ export default function LinkVault({ isSidebarOpen, onOpenSidebar }: LinkVaultPro
             setCloudSyncStatus('synced');
             try {
               localStorage.setItem(`${STORAGE_KEY}_${uid}`, JSON.stringify(mappedSections));
+              localStorage.setItem(STORAGE_KEY, JSON.stringify(mappedSections));
+              window.dispatchEvent(new Event('nidus_vault_sections_updated'));
             } catch (e) {}
             setIsLoaded(true);
             return;
@@ -264,6 +313,7 @@ export default function LinkVault({ isSidebarOpen, onOpenSidebar }: LinkVaultPro
     setSections(indexed);
     try {
       localStorage.setItem(STORAGE_KEY, JSON.stringify(indexed));
+      window.dispatchEvent(new Event('nidus_vault_sections_updated'));
     } catch (e) {}
 
     // Debounced cloud sync to Supabase
@@ -1035,6 +1085,16 @@ export default function LinkVault({ isSidebarOpen, onOpenSidebar }: LinkVaultPro
     );
   };
 
+  const handleTogglePinToBookmarks = (id: string, e?: React.MouseEvent) => {
+    if (e) e.stopPropagation();
+    const updated = updateSectionInTree(sections, id, (sec) => ({
+      ...sec,
+      is_pinned_to_bookmarks: !sec.is_pinned_to_bookmarks,
+      updated_at: new Date().toISOString(),
+    }));
+    saveSections(updated);
+  };
+
   // ── Link CRUD ─────────────────────────────────────────────────
 
   const handleAddLink = async (sectionId: string) => {
@@ -1295,6 +1355,7 @@ export default function LinkVault({ isSidebarOpen, onOpenSidebar }: LinkVaultPro
     return (
       <div
         key={section.id}
+        id={`vault-section-${section.id}`}
         className={`bg-white border rounded-lg shadow-xs overflow-hidden transition-all ${
           isTopLevel ? 'border-neutral-200 mb-3' : 'border-neutral-200/80 my-2 ml-3 sm:ml-5 border-l-2'
         } ${isSectionSelected ? 'ring-2 ring-indigo-500/50' : ''}`}
@@ -1348,8 +1409,14 @@ export default function LinkVault({ isSidebarOpen, onOpenSidebar }: LinkVaultPro
               className="flex-1 text-xs font-bold bg-white border border-neutral-300 rounded px-2 py-0.5 outline-none focus:ring-2 focus:ring-indigo-500/20"
             />
           ) : (
-            <span className={`flex-1 text-xs font-bold ${isTopLevel ? 'text-neutral-800' : 'text-neutral-700'} truncate`}>
-              {section.title}
+            <span className={`flex-1 text-xs font-bold ${isTopLevel ? 'text-neutral-800' : 'text-neutral-700'} truncate flex items-center gap-1.5`}>
+              <span className="truncate">{section.title}</span>
+              {section.is_pinned_to_bookmarks && (
+                <span className="inline-flex items-center gap-1 text-[9.5px] font-extrabold px-1.5 py-0.2 rounded bg-orange-50 text-[#ff6600] border border-orange-200 shrink-0" title="Shortcut linked in All Bookmarks">
+                  <Pin className="w-2.5 h-2.5 fill-current" />
+                  Pinned
+                </span>
+              )}
             </span>
           )}
 
@@ -1357,6 +1424,20 @@ export default function LinkVault({ isSidebarOpen, onOpenSidebar }: LinkVaultPro
           <span className={`px-1.5 py-0.2 rounded text-[10px] font-bold ${colorCfg.bg} ${colorCfg.text} border ${colorCfg.border}`}>
             {totalCount}
           </span>
+
+          {/* Pin to Bookmarks Button */}
+          <button
+            type="button"
+            onClick={(e) => handleTogglePinToBookmarks(section.id, e)}
+            className={`p-1 rounded transition-colors cursor-pointer ${
+              section.is_pinned_to_bookmarks
+                ? 'text-[#ff6600] bg-orange-50 hover:bg-orange-100'
+                : 'text-neutral-300 hover:text-neutral-600'
+            }`}
+            title={section.is_pinned_to_bookmarks ? 'Pinned in All Bookmarks (Click to unpin)' : 'Pin shortcut to All Bookmarks'}
+          >
+            <Pin className="w-3.5 h-3.5" style={{ fill: section.is_pinned_to_bookmarks ? 'currentColor' : 'none' }} />
+          </button>
 
           {/* Fast Delete Button (Hover) */}
           <button
@@ -1385,9 +1466,20 @@ export default function LinkVault({ isSidebarOpen, onOpenSidebar }: LinkVaultPro
             </button>
             {sectionMenu === section.id && (
               <div
-                className="absolute right-0 top-7 z-30 w-44 bg-white border border-neutral-200 rounded-md shadow-xl py-1 text-xs font-semibold animate-fade-in"
+                className="absolute right-0 top-7 z-30 w-48 bg-white border border-neutral-200 rounded-md shadow-xl py-1 text-xs font-semibold animate-fade-in"
                 onClick={(e) => e.stopPropagation()}
               >
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    handleTogglePinToBookmarks(section.id, e);
+                    setSectionMenu(null);
+                  }}
+                  className="w-full px-3 py-1.5 hover:bg-neutral-50 flex items-center gap-2 text-left cursor-pointer text-neutral-700"
+                >
+                  <Pin className="w-3.5 h-3.5 text-orange-500" style={{ fill: section.is_pinned_to_bookmarks ? 'currentColor' : 'none' }} />
+                  <span>{section.is_pinned_to_bookmarks ? 'Unpin from All Bookmarks' : 'Pin to All Bookmarks'}</span>
+                </button>
                 <button
                   type="button"
                   onClick={() => {

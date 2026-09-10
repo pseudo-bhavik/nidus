@@ -2,7 +2,7 @@
 
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { supabase } from '../lib/supabase';
-import { Bookmark, ViewType } from '../lib/types';
+import { Bookmark, ViewType, VaultSection } from '../lib/types';
 import LeftSidebar from '../components/LeftSidebar';
 import CentralMonitor from '../components/CentralMonitor';
 import InspectorPanel from '../components/InspectorPanel';
@@ -131,6 +131,48 @@ export default function Dashboard({ initialView }: { initialView?: ViewType } = 
   // Sticky Notes Home Screen Widget Visibility Toggle
   const [showStickyWidget, setShowStickyWidget] = useState(true);
   const [privateToastUrl, setPrivateToastUrl] = useState<string | null>(null);
+
+  // Vault Shortcut Linking into All Bookmarks
+  const [targetVaultSectionId, setTargetVaultSectionId] = useState<string | null>(null);
+  const [pinnedVaultSections, setPinnedVaultSections] = useState<VaultSection[]>([]);
+
+  const refreshPinnedVaultSections = useCallback(() => {
+    if (typeof window === 'undefined') return;
+    try {
+      const raw = localStorage.getItem('nidus_vault_sections');
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        const pinned: VaultSection[] = [];
+        const extractPinned = (list: VaultSection[]) => {
+          if (!Array.isArray(list)) return;
+          list.forEach((sec) => {
+            if (sec.is_pinned_to_bookmarks) pinned.push(sec);
+            if (sec.subsections && sec.subsections.length > 0) {
+              extractPinned(sec.subsections);
+            }
+          });
+        };
+        extractPinned(parsed);
+        setPinnedVaultSections(pinned);
+      }
+    } catch (e) {}
+  }, []);
+
+  useEffect(() => {
+    refreshPinnedVaultSections();
+    const handleStorageChange = () => refreshPinnedVaultSections();
+    window.addEventListener('storage', handleStorageChange);
+    window.addEventListener('nidus_vault_sections_updated', handleStorageChange);
+    return () => {
+      window.removeEventListener('storage', handleStorageChange);
+      window.removeEventListener('nidus_vault_sections_updated', handleStorageChange);
+    };
+  }, [refreshPinnedVaultSections]);
+
+  const handleOpenVaultSection = (sectionId: string) => {
+    setTargetVaultSectionId(sectionId);
+    handleViewChange('vault');
+  };
 
   useEffect(() => {
     const storedShowWidget = localStorage.getItem('nidus_show_sticky_widget');
@@ -1217,6 +1259,8 @@ export default function Dashboard({ initialView }: { initialView?: ViewType } = 
           <LinkVault
             isSidebarOpen={isSidebarOpen}
             onOpenSidebar={() => setIsSidebarOpen(true)}
+            targetSectionId={targetVaultSectionId}
+            onClearTargetSectionId={() => setTargetVaultSectionId(null)}
           />
         ) : currentView === 'calendar' ? (
           <CalendarView
@@ -1254,6 +1298,8 @@ export default function Dashboard({ initialView }: { initialView?: ViewType } = 
             onOpenStickyNotes={() => handleViewChange('sticky-notes')}
             showStickyWidget={showStickyWidget}
             onToggleStickyWidget={handleToggleStickyWidget}
+            pinnedVaultSections={pinnedVaultSections}
+            onOpenVaultSection={handleOpenVaultSection}
           />
         )}
       </div>
