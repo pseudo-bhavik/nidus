@@ -2,6 +2,10 @@ import { NextResponse } from 'next/server';
 import nodemailer from 'nodemailer';
 import { supabase } from '@/lib/supabase';
 
+// In-memory server-side deduplication map (stores dedupeKey -> timestamp)
+const recentDispatches = new Map<string, number>();
+const DEDUPE_WINDOW_MS = 10 * 60 * 1000; // 10 minutes
+
 export async function POST(req: Request) {
   try {
     const body = await req.json();
@@ -20,6 +24,33 @@ export async function POST(req: Request) {
       smtpPass,
       reminderLabel,
     } = body;
+
+    // Check for duplicate dispatches within 10 minutes (prevents duplicate sends from multiple tabs/devices)
+    const isTestAlert = reminderLabel === 'Settings Verification' || reminderLabel === 'Test' || eventTitle === 'Nidus Notifications Test Alert';
+    const dedupeKey = `${(eventTitle || '').trim()}_${(startTime || '').trim()}_${(reminderLabel || '').trim()}_${(telegramChatId || '').trim()}_${(email || '').trim()}`;
+
+    const now = Date.now();
+    // Clean up old entries
+    for (const [key, timestamp] of recentDispatches.entries()) {
+      if (now - timestamp > DEDUPE_WINDOW_MS) {
+        recentDispatches.delete(key);
+      }
+    }
+
+    if (!isTestAlert && recentDispatches.has(dedupeKey)) {
+      const prevSent = recentDispatches.get(dedupeKey)!;
+      if (now - prevSent < DEDUPE_WINDOW_MS) {
+        return NextResponse.json({
+          success: true,
+          skippedDuplicate: true,
+          message: 'Notification already dispatched recently for this event window.',
+        });
+      }
+    }
+
+    if (!isTestAlert) {
+      recentDispatches.set(dedupeKey, now);
+    }
 
     const results: { telegram?: any; email?: any; errors?: string[] } = {};
     const errors: string[] = [];

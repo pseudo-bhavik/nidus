@@ -139,6 +139,25 @@ export default function Dashboard({ initialView }: { initialView?: ViewType } = 
   const refreshPinnedVaultSections = useCallback(() => {
     if (typeof window === 'undefined') return;
     try {
+      let pinnedIds: string[] = [];
+      const rawPinned = localStorage.getItem('nidus_pinned_vault_section_ids');
+      if (rawPinned) {
+        try { pinnedIds = JSON.parse(rawPinned); } catch (e) {}
+      }
+      if (!Array.isArray(pinnedIds)) pinnedIds = [];
+
+      // Check session user metadata for cloud persistence across devices
+      supabase.auth.getUser().then(({ data: { user } }) => {
+        if (user?.user_metadata?.pinned_vault_section_ids && Array.isArray(user.user_metadata.pinned_vault_section_ids)) {
+          const cloudIds: string[] = user.user_metadata.pinned_vault_section_ids;
+          const merged = Array.from(new Set([...pinnedIds, ...cloudIds]));
+          if (merged.length !== pinnedIds.length) {
+            localStorage.setItem('nidus_pinned_vault_section_ids', JSON.stringify(merged));
+            refreshPinnedVaultSections();
+          }
+        }
+      }).catch(() => {});
+
       const raw = localStorage.getItem('nidus_vault_sections');
       if (raw) {
         const parsed = JSON.parse(raw);
@@ -146,7 +165,9 @@ export default function Dashboard({ initialView }: { initialView?: ViewType } = 
         const extractPinned = (list: VaultSection[]) => {
           if (!Array.isArray(list)) return;
           list.forEach((sec) => {
-            if (sec.is_pinned_to_bookmarks) pinned.push(sec);
+            if (sec.is_pinned_to_bookmarks || pinnedIds.includes(sec.id)) {
+              pinned.push({ ...sec, is_pinned_to_bookmarks: true });
+            }
             if (sec.subsections && sec.subsections.length > 0) {
               extractPinned(sec.subsections);
             }

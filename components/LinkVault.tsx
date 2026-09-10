@@ -253,6 +253,22 @@ export default function LinkVault({
         const uid = session?.user?.id;
 
         if (uid) {
+          // Read pinned section IDs from localStorage and Supabase user metadata
+          let pinnedIds: string[] = [];
+          try {
+            const rawPinned = localStorage.getItem('nidus_pinned_vault_section_ids');
+            if (rawPinned) pinnedIds = JSON.parse(rawPinned);
+            if (!Array.isArray(pinnedIds)) pinnedIds = [];
+          } catch (e) {}
+
+          if (session?.user?.user_metadata?.pinned_vault_section_ids && Array.isArray(session.user.user_metadata.pinned_vault_section_ids)) {
+            const cloudPinned = session.user.user_metadata.pinned_vault_section_ids;
+            pinnedIds = Array.from(new Set([...pinnedIds, ...cloudPinned]));
+            try {
+              localStorage.setItem('nidus_pinned_vault_section_ids', JSON.stringify(pinnedIds));
+            } catch (e) {}
+          }
+
           // Logged in: query ONLY this user's vault sections
           const { data: dbSections, error } = await supabase
             .from('vault_sections')
@@ -261,18 +277,20 @@ export default function LinkVault({
             .order('position', { ascending: true });
 
           if (!error && dbSections && isMounted) {
-            const mappedSections: VaultSection[] = dbSections.map((s: any) => ({
+            const mapWithPinned = (s: any): VaultSection => ({
               id: s.id,
               title: s.title || 'Untitled Section',
               color: s.color || 'emerald',
               links: Array.isArray(s.links) ? s.links : [],
-              subsections: Array.isArray(s.subsections) ? s.subsections : [],
+              subsections: Array.isArray(s.subsections) ? s.subsections.map(mapWithPinned) : [],
               is_collapsed: s.is_collapsed ?? false,
-              is_pinned_to_bookmarks: s.is_pinned_to_bookmarks ?? false,
+              is_pinned_to_bookmarks: pinnedIds.includes(s.id),
               position: typeof s.position === 'number' ? s.position : 0,
               created_at: s.created_at || new Date().toISOString(),
               updated_at: s.updated_at || new Date().toISOString(),
-            }));
+            });
+
+            const mappedSections: VaultSection[] = dbSections.map(mapWithPinned);
 
             setSections(mappedSections);
             setCloudSyncStatus('synced');
@@ -1061,6 +1079,18 @@ export default function LinkVault({
     try {
       await supabase.from('vault_sections').delete().eq('id', targetId);
     } catch (err) {}
+
+    try {
+      const raw = localStorage.getItem('nidus_pinned_vault_section_ids');
+      if (raw) {
+        const list: string[] = JSON.parse(raw);
+        if (Array.isArray(list) && list.includes(targetId)) {
+          const updated = list.filter((id) => id !== targetId);
+          localStorage.setItem('nidus_pinned_vault_section_ids', JSON.stringify(updated));
+          supabase.auth.updateUser({ data: { pinned_vault_section_ids: updated } }).catch(() => {});
+        }
+      }
+    } catch (e) {}
   };
 
   const handleRenameSection = (id: string) => {
@@ -1087,9 +1117,34 @@ export default function LinkVault({
 
   const handleTogglePinToBookmarks = (id: string, e?: React.MouseEvent) => {
     if (e) e.stopPropagation();
+
+    // Read current pinned IDs
+    let currentPinned: string[] = [];
+    try {
+      const raw = localStorage.getItem('nidus_pinned_vault_section_ids');
+      if (raw) currentPinned = JSON.parse(raw);
+      if (!Array.isArray(currentPinned)) currentPinned = [];
+    } catch (e) {}
+
+    const isCurrentlyPinned = currentPinned.includes(id);
+    const updatedPinned = isCurrentlyPinned
+      ? currentPinned.filter((secId) => secId !== id)
+      : [...currentPinned, id];
+
+    try {
+      localStorage.setItem('nidus_pinned_vault_section_ids', JSON.stringify(updatedPinned));
+    } catch (e) {}
+
+    // Cloud sync pinned section IDs to Supabase user metadata so it follows user account
+    try {
+      supabase.auth.updateUser({
+        data: { pinned_vault_section_ids: updatedPinned },
+      }).catch(() => {});
+    } catch (e) {}
+
     const updated = updateSectionInTree(sections, id, (sec) => ({
       ...sec,
-      is_pinned_to_bookmarks: !sec.is_pinned_to_bookmarks,
+      is_pinned_to_bookmarks: !isCurrentlyPinned,
       updated_at: new Date().toISOString(),
     }));
     saveSections(updated);

@@ -187,6 +187,7 @@ export default function CalendarView({ isSidebarOpen, onOpenSidebar }: CalendarV
 
   const saveTimerRef = useRef<NodeJS.Timeout | null>(null);
   const titleInputRef = useRef<HTMLInputElement>(null);
+  const sentAlertsRef = useRef<Set<string>>(new Set());
 
   // ── Cloud Database Sync Helper ─────────────────────────────────
 
@@ -360,12 +361,15 @@ export default function CalendarView({ isSidebarOpen, onOpenSidebar }: CalendarV
           reminderMs = new Date(evt.reminder_custom_time).getTime();
         }
 
-        // Is it due now? (between reminderMs - 30s and reminderMs + 2 hours)
-        if (now >= reminderMs - 30000 && now - reminderMs <= 2 * 60 * 60 * 1000) {
-          const sentKey = `nidus_alert_sent_${evt.id}_${reminderMs}`;
-          if (!localStorage.getItem(sentKey)) {
-            // Mark as sent immediately to prevent duplicate triggers
-            localStorage.setItem(sentKey, new Date().toISOString());
+        // Is it due now? (Trigger strictly when now >= reminderMs, up to 10 minutes tolerance)
+        if (now >= reminderMs && now - reminderMs <= 10 * 60 * 1000) {
+          const sentKey = `nidus_alert_sent_${evt.id}_${evt.start_time}_${evt.reminder_type}`;
+          if (!sentAlertsRef.current.has(sentKey) && !localStorage.getItem(sentKey)) {
+            // Mark as sent immediately in both memory ref and localStorage to prevent duplicate triggers
+            sentAlertsRef.current.add(sentKey);
+            try {
+              localStorage.setItem(sentKey, new Date().toISOString());
+            } catch (e) {}
 
             const reminderLabel =
               evt.reminder_type === '3h'

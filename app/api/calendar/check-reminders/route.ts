@@ -47,8 +47,8 @@ export async function POST(req: Request) {
         reminderMs = new Date(evt.reminder_custom_time).getTime();
       }
 
-      // Check if due: within last 1 hour or current time up to reminder time + tolerance
-      const isDue = now >= reminderMs && now - reminderMs <= 60 * 60 * 1000;
+      // Check if due: within last 10 minutes
+      const isDue = now >= reminderMs && now - reminderMs <= 10 * 60 * 1000;
 
       if (isDue) {
         const hasTg = evt.reminder_channel_telegram && evt.reminder_telegram_chat_id;
